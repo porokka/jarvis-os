@@ -109,6 +109,137 @@ function isCommandSafe(cmd: string): boolean {
   return !BLOCKED_PATTERNS.some((p) => p.test(cmd));
 }
 
+// --- Approval Queue ---
+// Tools that need user approval before executing
+const TOOLS_REQUIRING_APPROVAL = new Set([
+  "shell_exec",
+  "file_write",
+  "git_commit",
+  "git_push",
+  "sync_vault",
+  "sync_code",
+  "vault_write",
+]);
+
+interface ApprovalRequest {
+  id: string;
+  tool: string;
+  description: string;
+  params: Record<string, unknown>;
+  status: "pending" | "approved" | "denied";
+  createdAt: number;
+  resolvedAt?: number;
+  resolve?: (approved: boolean) => void;
+}
+
+const approvalQueue = new Map<string, ApprovalRequest>();
+
+// SSE clients waiting for approval events
+const approvalListeners = new Set<ServerResponse>();
+
+function broadcastApproval(event: string, data: unknown) {
+  const msg = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+  for (const res of approvalListeners) {
+    try {
+      res.write(msg);
+    } catch {
+      approvalListeners.delete(res);
+    }
+  }
+}
+
+async function requestApproval(
+  tool: string,
+  description: string,
+  params: Record<string, unknown>,
+  timeoutMs = 120000
+): Promise<boolean> {
+  const id = randomUUID();
+  const request: ApprovalRequest = {
+    id,
+    tool,
+    description,
+    params,
+    status: "pending",
+    createdAt: Date.now(),
+  };
+
+  return new Promise<boolean>((resolvePromise) => {
+    request.resolve = resolvePromise;
+    approvalQueue.set(id, request);
+
+    // Broadcast to UI + write to bridge for Jarvis voice
+    broadcastApproval("approval_request", {
+      id,
+      tool,
+      description,
+      params,
+    });
+
+    // Also write to bridge so Jarvis can ask vocally
+    writeBridge("approval.json", JSON.stringify({
+      id,
+      tool,
+      description,
+      status: "pending",
+    }));
+    writeBridge("state.txt", "asking");
+
+    log(`APPROVAL REQUEST [${id}]: ${tool} — ${description}`);
+
+    // Timeout → auto-deny
+    setTimeout(() => {
+      if (request.status === "pending") {
+        request.status = "denied";
+        request.resolvedAt = Date.now();
+        approvalQueue.delete(id);
+        broadcastApproval("approval_resolved", { id, status: "denied", reason: "timeout" });
+        log(`APPROVAL TIMEOUT [${id}]: ${tool}`);
+        resolvePromise(false);
+      }
+    }, timeoutMs);
+  });
+}
+
+function resolveApproval(id: string, approved: boolean): boolean {
+  const request = approvalQueue.get(id);
+  if (!request || request.status !== "pending") return false;
+
+  request.status = approved ? "approved" : "denied";
+  request.resolvedAt = Date.now();
+  approvalQueue.delete(id);
+
+  broadcastApproval("approval_resolved", { id, status: request.status });
+  writeBridge("approval.json", JSON.stringify({ id, status: request.status }));
+  writeBridge("state.txt", approved ? "thinking" : "standby");
+
+  log(`APPROVAL ${request.status.toUpperCase()} [${id}]: ${request.tool}`);
+
+  if (request.resolve) request.resolve(approved);
+  return true;
+}
+
+// Helper to wrap tool execution with approval
+async function withApproval<T>(
+  tool: string,
+  description: string,
+  params: Record<string, unknown>,
+  execute: () => Promise<T>
+): Promise<T | { content: Array<{ type: "text"; text: string }> }> {
+  if (!TOOLS_REQUIRING_APPROVAL.has(tool)) {
+    return execute();
+  }
+
+  const approved = await requestApproval(tool, description, params);
+  if (!approved) {
+    return {
+      content: [{ type: "text" as const, text: `DENIED: ${tool} — ${description}. User did not approve.` }],
+    };
+  }
+
+  return execute();
+}
+
 // --- Server ---
 const server = new McpServer({
   name: "jarvis-remote",
@@ -157,20 +288,22 @@ server.tool(
   },
   async ({ path, content, create_dirs }) => {
     const safe = safePath(path);
-    if (create_dirs) {
-      const dir = join(safe, "..");
-      mkdirSync(dir, { recursive: true });
-    }
-    writeFileSync(safe, content);
-    log(`WRITE: ${safe} (${content.length} bytes)`);
-    return {
-      content: [
-        {
-          type: "text" as const,
-          text: `Written ${content.length} bytes to ${safe}`,
-        },
-      ],
-    };
+    return withApproval("file_write", `Write ${content.length} bytes to ${safe}`, { path: safe }, async () => {
+      if (create_dirs) {
+        const dir = join(safe, "..");
+        mkdirSync(dir, { recursive: true });
+      }
+      writeFileSync(safe, content);
+      log(`WRITE: ${safe} (${content.length} bytes)`);
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Written ${content.length} bytes to ${safe}`,
+          },
+        ],
+      };
+    });
   }
 );
 
@@ -270,18 +403,20 @@ server.tool(
     }
 
     const safeCwd = cwd ? safePath(cwd) : CODE_DIR;
-    log(`SHELL [${safeCwd}]: ${command}`);
-    const { stdout, stderr, code } = await shell(command, safeCwd, timeout);
+    return withApproval("shell_exec", `Run: ${command}`, { command, cwd: safeCwd }, async () => {
+      log(`SHELL [${safeCwd}]: ${command}`);
+      const { stdout, stderr, code } = await shell(command, safeCwd, timeout);
 
-    const output = [
-      `Exit code: ${code}`,
-      stdout ? `--- stdout ---\n${stdout}` : "",
-      stderr ? `--- stderr ---\n${stderr}` : "",
-    ]
-      .filter(Boolean)
-      .join("\n");
+      const output = [
+        `Exit code: ${code}`,
+        stdout ? `--- stdout ---\n${stdout}` : "",
+        stderr ? `--- stderr ---\n${stderr}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n");
 
-    return { content: [{ type: "text" as const, text: output }] };
+      return { content: [{ type: "text" as const, text: output }] };
+    });
   }
 );
 
@@ -328,23 +463,25 @@ server.tool(
   },
   async ({ repo, message, files }) => {
     const safe = safePath(repo);
-    const addCmd = files
-      ? `git add ${files.map((f) => `"${f}"`).join(" ")}`
-      : "git add -A";
-    await shell(addCmd, safe);
-    const { stdout, stderr, code } = await shell(
-      `git commit -m "${message.replace(/"/g, '\\"')}"`,
-      safe
-    );
-    log(`GIT COMMIT [${safe}]: ${message}`);
-    return {
-      content: [
-        {
-          type: "text" as const,
-          text: code === 0 ? stdout : `Error: ${stderr}`,
-        },
-      ],
-    };
+    return withApproval("git_commit", `Commit in ${safe}: "${message}"`, { repo: safe, message }, async () => {
+      const addCmd = files
+        ? `git add ${files.map((f) => `"${f}"`).join(" ")}`
+        : "git add -A";
+      await shell(addCmd, safe);
+      const { stdout, stderr, code } = await shell(
+        `git commit -m "${message.replace(/"/g, '\\"')}"`,
+        safe
+      );
+      log(`GIT COMMIT [${safe}]: ${message}`);
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: code === 0 ? stdout : `Error: ${stderr}`,
+          },
+        ],
+      };
+    });
   }
 );
 
@@ -357,21 +494,23 @@ server.tool(
   },
   async ({ repo, branch }) => {
     const safe = safePath(repo);
-    const branchArg = branch ? `-u origin ${branch}` : "";
-    const { stdout, stderr, code } = await shell(
-      `git push ${branchArg}`,
-      safe,
-      60000
-    );
-    log(`GIT PUSH [${safe}]`);
-    return {
-      content: [
-        {
-          type: "text" as const,
-          text: code === 0 ? stdout || "Pushed" : `Error: ${stderr}`,
-        },
-      ],
-    };
+    return withApproval("git_push", `Push ${safe} to remote`, { repo: safe, branch }, async () => {
+      const branchArg = branch ? `-u origin ${branch}` : "";
+      const { stdout, stderr, code } = await shell(
+        `git push ${branchArg}`,
+        safe,
+        60000
+      );
+      log(`GIT PUSH [${safe}]`);
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: code === 0 ? stdout || "Pushed" : `Error: ${stderr}`,
+          },
+        ],
+      };
+    });
   }
 );
 
@@ -431,15 +570,17 @@ server.tool(
   },
   async ({ note, content }) => {
     const safe = safePath(join(VAULT_DIR, note));
-    const dir = join(safe, "..");
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(safe, content);
-    log(`VAULT WRITE: ${note}`);
-    return {
-      content: [
-        { type: "text" as const, text: `Written vault note: ${note}` },
-      ],
-    };
+    return withApproval("vault_write", `Write vault note: ${note}`, { note }, async () => {
+      const dir = join(safe, "..");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(safe, content);
+      log(`VAULT WRITE: ${note}`);
+      return {
+        content: [
+          { type: "text" as const, text: `Written vault note: ${note}` },
+        ],
+      };
+    });
   }
 );
 
@@ -497,37 +638,39 @@ server.tool(
         ],
       };
     }
-    if (direction === "pull") {
+    return withApproval("sync_vault", `Vault sync: ${direction}`, { direction }, async () => {
+      if (direction === "pull") {
+        const { stdout, stderr, code } = await shell(
+          "git pull",
+          VAULT_DIR,
+          60000
+        );
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: code === 0 ? `Vault pulled: ${stdout}` : `Error: ${stderr}`,
+            },
+          ],
+        };
+      }
+      // push: auto-commit + push
+      await shell('git add -A && git commit -m "vault sync" || true', VAULT_DIR);
       const { stdout, stderr, code } = await shell(
-        "git pull",
+        "git push",
         VAULT_DIR,
         60000
       );
+      log(`VAULT SYNC: push`);
       return {
         content: [
           {
             type: "text" as const,
-            text: code === 0 ? `Vault pulled: ${stdout}` : `Error: ${stderr}`,
+            text: code === 0 ? `Vault pushed: ${stdout}` : `Error: ${stderr}`,
           },
         ],
       };
-    }
-    // push: auto-commit + push
-    await shell('git add -A && git commit -m "vault sync" || true', VAULT_DIR);
-    const { stdout, stderr, code } = await shell(
-      "git push",
-      VAULT_DIR,
-      60000
-    );
-    log(`VAULT SYNC: push`);
-    return {
-      content: [
-        {
-          type: "text" as const,
-          text: code === 0 ? `Vault pushed: ${stdout}` : `Error: ${stderr}`,
-        },
-      ],
-    };
+    });
   }
 );
 
@@ -557,21 +700,23 @@ server.tool(
         ],
       };
     }
-    if (direction === "pull") {
-      const { stdout } = await shell("git pull", repoDir, 60000);
+    return withApproval("sync_code", `Code sync ${project}: ${direction}`, { project, direction }, async () => {
+      if (direction === "pull") {
+        const { stdout } = await shell("git pull", repoDir, 60000);
+        return {
+          content: [
+            { type: "text" as const, text: `Pulled ${project}: ${stdout}` },
+          ],
+        };
+      }
+      const { stdout } = await shell("git push", repoDir, 60000);
+      log(`CODE SYNC: ${project} push`);
       return {
         content: [
-          { type: "text" as const, text: `Pulled ${project}: ${stdout}` },
+          { type: "text" as const, text: `Pushed ${project}: ${stdout}` },
         ],
       };
-    }
-    const { stdout } = await shell("git push", repoDir, 60000);
-    log(`CODE SYNC: ${project} push`);
-    return {
-      content: [
-        { type: "text" as const, text: `Pushed ${project}: ${stdout}` },
-      ],
-    };
+    });
   }
 );
 
@@ -699,8 +844,18 @@ const httpsOptions = {
   cert: readCert(join(CERT_DIR, "jarvis.crt")),
 };
 
+// Helper to read POST body
+function readBody(req: IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let data = "";
+    req.on("data", (chunk: Buffer) => (data += chunk.toString()));
+    req.on("end", () => resolve(data));
+    req.on("error", reject);
+  });
+}
+
 const httpServer = createServer(httpsOptions, async (req: IncomingMessage, res: ServerResponse) => {
-  const url = new URL(req.url!, `http://${req.headers.host}`);
+  const url = new URL(req.url!, `https://${req.headers.host}`);
 
   // CORS for browser clients
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -716,9 +871,61 @@ const httpServer = createServer(httpsOptions, async (req: IncomingMessage, res: 
   // Health check
   if (url.pathname === "/health") {
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ status: "ok", tools: 16, sessions: sessions.size }));
+    res.end(JSON.stringify({
+      status: "ok",
+      tools: 16,
+      sessions: sessions.size,
+      pending_approvals: approvalQueue.size,
+    }));
     return;
   }
+
+  // --- Approval Endpoints ---
+
+  // SSE stream: UI connects here to receive approval requests in real-time
+  if (url.pathname === "/approvals/stream" && req.method === "GET") {
+    if (!checkAuth(req)) { res.writeHead(401).end(); return; }
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      "Connection": "keep-alive",
+    });
+    // Send any pending approvals immediately
+    for (const [, req] of approvalQueue) {
+      if (req.status === "pending") {
+        res.write(`event: approval_request\ndata: ${JSON.stringify({
+          id: req.id, tool: req.tool, description: req.description, params: req.params,
+        })}\n\n`);
+      }
+    }
+    approvalListeners.add(res);
+    req.on("close", () => approvalListeners.delete(res));
+    return;
+  }
+
+  // List pending approvals
+  if (url.pathname === "/approvals" && req.method === "GET") {
+    if (!checkAuth(req)) { res.writeHead(401).end(); return; }
+    const pending = Array.from(approvalQueue.values())
+      .filter((r) => r.status === "pending")
+      .map(({ id, tool, description, params, createdAt }) => ({ id, tool, description, params, createdAt }));
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(pending));
+    return;
+  }
+
+  // Approve or deny: POST /approvals/:id { "approved": true/false }
+  const approvalMatch = url.pathname.match(/^\/approvals\/([a-f0-9-]+)$/);
+  if (approvalMatch && req.method === "POST") {
+    if (!checkAuth(req)) { res.writeHead(401).end(); return; }
+    const body = JSON.parse(await readBody(req));
+    const success = resolveApproval(approvalMatch[1], body.approved === true);
+    res.writeHead(success ? 200 : 404, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: success }));
+    return;
+  }
+
+  // --- MCP Endpoint ---
 
   if (url.pathname !== "/mcp") {
     res.writeHead(404).end("Not found");
