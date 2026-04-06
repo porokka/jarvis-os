@@ -1,0 +1,45 @@
+@import "tailwindcss";
+
+:root {
+  --background: #06060b;
+  --foreground: #e0e0e0;
+  --accent: #40a0f0;
+  --accent-dim: rgba(64, 160, 240, 0.15);
+  --danger: #f03c3c;
+  --warning: #f0c040;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-mono), 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+}
+
+/* Orb animations */
+@keyframes orb-idle {
+  0%, 100% { box-shadow: 0 0 20px rgba(64, 160, 240, 0.1); }
+  50% { box-shadow: 0 0 30px rgba(64, 160, 240, 0.2); }
+}
+
+@keyframes orb-listening {
+  0%, 100% { transform: scale(1); border-color: rgba(240, 60, 60, 0.6); }
+  50% { transform: scale(1.05); border-color: rgba(240, 60, 60, 0.8); }
+}
+
+@keyframes orb-thinking {
+  0% { box-shadow: 0 0 20px rgba(240, 192, 64, 0.2); }
+  50% { box-shadow: 0 0 50px rgba(240, 192, 64, 0.4); }
+  100% { box-shadow: 0 0 20px rgba(240, 192, 64, 0.2); }
+}
+
+@keyframes orb-speaking {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.03); }
+}

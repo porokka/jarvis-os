@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+venv/
+__pycache__/
+
+# Build
+dist/
+
+# Models (large files)
+tts/models/
+*.gguf
+*.onnx
+*.npz
+*.bin
+*.wav
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Env
+.env
+.env.local

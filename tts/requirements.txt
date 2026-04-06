@@ -1,0 +1,10 @@
+# Orpheus TTS dependencies
+# Install: pip install -r tts/requirements.txt
+
+# Model inference (install with CUDA support — see below)
+# pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124
+huggingface-hub
+snac
+torch
+numpy
+soundfile

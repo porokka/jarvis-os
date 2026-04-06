@@ -1,0 +1,25 @@
+{
+  "name": "operation-jarvis",
+  "version": "0.1.0",
+  "description": "Local AI assistant — Claude Code brain, Unreal Engine face, local TTS voice. Zero cloud.",
+  "main": "dist/mcp/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/mcp/index.js",
+    "dev": "tsx src/mcp/index.ts",
+    "bridge": "bash scripts/watcher.sh"
+  },
+  "keywords": ["mcp", "jarvis", "unreal-engine", "tts", "ai-assistant", "local"],
+  "author": "Sami Porokka",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.2"
+  }
+}

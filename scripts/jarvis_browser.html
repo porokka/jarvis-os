@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>JARVIS</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: #0a0a0f;
+      color: #e0e0e0;
+      font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+
+    #state-indicator {
+      position: fixed;
+      top: 24px;
+      right: 24px;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 3px;
+      opacity: 0.5;
+    }
+
+    #state-indicator.thinking { color: #f0c040; }
+    #state-indicator.speaking { color: #40a0f0; }
+    #state-indicator.standby { color: #40f060; }
+
+    .orb-container {
+      position: relative;
+      width: 200px;
+      height: 200px;
+      margin-bottom: 48px;
+    }
+
+    .orb {
+      width: 200px;
+      height: 200px;
+      border-radius: 50%;
+      background: radial-gradient(circle at 35% 35%,
+        rgba(64, 160, 240, 0.3),
+        rgba(64, 160, 240, 0.05) 60%,
+        transparent 70%
+      );
+      border: 1px solid rgba(64, 160, 240, 0.2);
+      transition: all 0.6s cubic-bezier(0.19, 1, 0.22, 1);
+      cursor: pointer;
+    }
+
+    .orb:hover { border-color: rgba(64, 160, 240, 0.5); }
+    .orb.listening {
+      border-color: rgba(240, 60, 60, 0.6);
+      background: radial-gradient(circle at 35% 35%,
+        rgba(240, 60, 60, 0.3),
+        rgba(240, 60, 60, 0.05) 60%,
+        transparent 70%
+      );
+      animation: pulse 1.5s ease-in-out infinite;
+    }
+    .orb.thinking {
+      border-color: rgba(240, 192, 64, 0.5);
+      animation: spin-glow 2s linear infinite;
+    }
+    .orb.speaking {
+      border-color: rgba(64, 160, 240, 0.6);
+      animation: speak-pulse 0.8s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); opacity: 1; }
+      50% { transform: scale(1.05); opacity: 0.8; }
+    }
+    @keyframes spin-glow {
+      0% { box-shadow: 0 0 20px rgba(240, 192, 64, 0.2); }
+      50% { box-shadow: 0 0 40px rgba(240, 192, 64, 0.4); }
+      100% { box-shadow: 0 0 20px rgba(240, 192, 64, 0.2); }
+    }
+    @keyframes speak-pulse {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.02); }
+    }
+
+    #output {
+      max-width: 600px;
+      text-align: center;
+      font-size: 18px;
+      line-height: 1.6;
+      min-height: 60px;
+      opacity: 0.9;
+      transition: opacity 0.3s;
+    }
+
+    #input-bar {
+      position: fixed;
+      bottom: 32px;
+      display: flex;
+      gap: 8px;
+      width: min(600px, 90vw);
+    }
+
+    #text-input {
+      flex: 1;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 8px;
+      padding: 12px 16px;
+      color: #e0e0e0;
+      font-family: inherit;
+      font-size: 14px;
+      outline: none;
+    }
+    #text-input:focus { border-color: rgba(64, 160, 240, 0.5); }
+    #text-input::placeholder { color: rgba(255, 255, 255, 0.25); }
+
+    #send-btn {
+      background: rgba(64, 160, 240, 0.15);
+      border: 1px solid rgba(64, 160, 240, 0.3);
+      border-radius: 8px;
+      padding: 12px 20px;
+      color: #40a0f0;
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 14px;
+    }
+    #send-btn:hover { background: rgba(64, 160, 240, 0.25); }
+
+    .hint {
+      position: fixed;
+      bottom: 80px;
+      font-size: 11px;
+      opacity: 0.3;
+      letter-spacing: 1px;
+    }
+  </style>
+</head>
+<body>
+  <div id="state-indicator" class="standby">STANDBY</div>
+
+  <div class="orb-container">
+    <div class="orb" id="orb" title="Click to use voice"></div>
+  </div>
+
+  <div id="output">Ready.</div>
+
+  <div class="hint">Click orb for voice · Type below for text</div>
+
+  <div id="input-bar">
+    <input type="text" id="text-input" placeholder="Talk to JARVIS..." autocomplete="off" />
+    <button id="send-btn">Send</button>
+  </div>
+
+  <script>
+    const API = 'http://localhost:4000/api';
+    const TTS_API = 'http://localhost:5100';
+    const orb = document.getElementById('orb');
+    const output = document.getElementById('output');
+    const stateEl = document.getElementById('state-indicator');
+    const textInput = document.getElementById('text-input');
+    const sendBtn = document.getElementById('send-btn');
+
+    let recognition = null;
+    let isListening = false;
+    let lastOutput = '';
+    let ttsAvailable = false;
+
+    // Check if Orpheus TTS server is running
+    fetch(`${TTS_API}/health`).then(r => r.json()).then(() => {
+      ttsAvailable = true;
+      console.log('[JARVIS] Orpheus TTS available');
+    }).catch(() => {
+      console.log('[JARVIS] No TTS server — browser will not play audio');
+    });
+
+    // --- Voice Recognition ---
+    if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      recognition = new SpeechRecognition();
+      recognition.continuous = false;
+      recognition.interimResults = false;
+      recognition.lang = 'en-US';
+
+      recognition.onresult = (e) => {
+        const text = e.results[0][0].transcript;
+        output.textContent = `You: "${text}"`;
+        sendInput(text);
+      };
+
+      recognition.onend = () => {
+        isListening = false;
+        orb.classList.remove('listening');
+      };
+
+      recognition.onerror = (e) => {
+        console.error('Speech error:', e.error);
+        isListening = false;
+        orb.classList.remove('listening');
+      };
+    }
+
+    orb.addEventListener('click', () => {
+      if (!recognition) {
+        output.textContent = 'Voice not supported in this browser. Use text input.';
+        return;
+      }
+      if (isListening) {
+        recognition.stop();
+      } else {
+        isListening = true;
+        orb.classList.add('listening');
+        recognition.start();
+      }
+    });
+
+    // --- Text Input ---
+    function sendInput(text) {
+      fetch(`${API}/input`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+      }).catch(err => {
+        output.textContent = 'Bridge offline. Start server.py and watcher.sh first.';
+      });
+    }
+
+    sendBtn.addEventListener('click', () => {
+      const text = textInput.value.trim();
+      if (text) {
+        output.textContent = `You: "${text}"`;
+        sendInput(text);
+        textInput.value = '';
+      }
+    });
+
+    textInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') sendBtn.click();
+    });
+
+    // --- Poll State ---
+    async function pollState() {
+      try {
+        const res = await fetch(`${API}/state`);
+        const data = await res.json();
+
+        // Update state indicator
+        stateEl.textContent = data.state.toUpperCase();
+        stateEl.className = data.state;
+
+        // Update orb
+        orb.classList.remove('thinking', 'speaking');
+        if (data.state === 'thinking') orb.classList.add('thinking');
+        if (data.state === 'speaking') orb.classList.add('speaking');
+
+        // Update output if changed — and play TTS audio from browser
+        if (data.lastOutput && data.lastOutput !== lastOutput) {
+          lastOutput = data.lastOutput;
+          output.textContent = data.lastOutput;
+
+          // Play Orpheus TTS audio in browser if server is up
+          if (ttsAvailable && data.state === 'speaking') {
+            playTTS(data.lastOutput);
+          }
+        }
+      } catch {}
+    }
+
+    async function playTTS(text) {
+      try {
+        const res = await fetch(`${TTS_API}/speak`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text }),
+        });
+        if (res.ok) {
+          const blob = await res.blob();
+          const url = URL.createObjectURL(blob);
+          const audio = new Audio(url);
+          audio.onended = () => URL.revokeObjectURL(url);
+          audio.play();
+        }
+      } catch (e) {
+        console.error('[JARVIS] TTS playback failed:', e);
+      }
+    }
+
+    setInterval(pollState, 500);
+  </script>
+</body>
+</html>
