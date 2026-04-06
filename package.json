@@ -7,6 +7,7 @@
     "build": "tsc",
     "start": "node dist/mcp/index.js",
     "dev": "tsx src/mcp/index.ts",
+    "remote": "tsx src/mcp/remote.ts",
     "bridge": "bash scripts/watcher.sh"
   },
   "keywords": ["mcp", "jarvis", "unreal-engine", "tts", "ai-assistant", "local"],

@@ -22,6 +22,9 @@ Thumbs.db
 .vscode/
 .idea/
 
+# Certs
+certs/
+
 # Env
 .env
 .env.local
