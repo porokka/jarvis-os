@@ -4,8 +4,9 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { JarvisScene } from "./components/face/jarvis-scene";
 import { ChatHistory } from "./components/chat-history";
 import { InputBar } from "./components/input-bar";
+import { ApprovalPanel } from "./components/approval-panel";
 
-type JarvisState = "standby" | "listening" | "thinking" | "speaking";
+type JarvisState = "standby" | "listening" | "thinking" | "speaking" | "asking";
 
 interface HistoryEntry {
   role: "user" | "jarvis";
@@ -20,6 +21,7 @@ export default function JarvisPage() {
   const [output, setOutput] = useState("Ready.");
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [ttsAvailable, setTtsAvailable] = useState(false);
+  const [pendingApprovals, setPendingApprovals] = useState(0);
 
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const historyEndRef = useRef<HTMLDivElement>(null);
@@ -145,6 +147,7 @@ export default function JarvisPage() {
     listening: "LISTENING",
     thinking: "THINKING",
     speaking: "SPEAKING",
+    asking: "AWAITING APPROVAL",
   };
 
   const stateColor: Record<string, string> = {
@@ -152,15 +155,30 @@ export default function JarvisPage() {
     listening: "text-red-400/70",
     thinking: "text-yellow-400/60",
     speaking: "text-blue-400/60",
+    asking: "text-amber-400/70",
   };
 
   return (
     <main className="flex-1 flex flex-col items-center select-none h-screen overflow-hidden bg-[#06060b]">
+      {/* Approval Panel */}
+      <ApprovalPanel
+        onApprovalChange={(count) => {
+          setPendingApprovals(count);
+          if (count > 0) setState("asking");
+          else setState((s) => (s === "asking" ? "standby" : s));
+        }}
+      />
+
       {/* State indicator */}
       <div
         className={`fixed top-6 right-6 text-xs tracking-[3px] uppercase z-10 ${stateColor[state]}`}
       >
         {stateLabel[state]}
+        {pendingApprovals > 0 && (
+          <span className="ml-2 inline-flex items-center justify-center w-4 h-4 rounded-full bg-amber-400/20 text-amber-400 text-[9px]">
+            {pendingApprovals}
+          </span>
+        )}
       </div>
 
       {/* TTS indicator */}
