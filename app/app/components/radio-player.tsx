@@ -145,41 +145,38 @@ export function RadioPlayer() {
   };
 
   const currentLabel = currentStation ? STATIONS[currentStation]?.label : null;
-
-  // Hidden audio element always renders (for voice-triggered playback)
-  if (!audioPlaying && !currentStation) {
-    return <audio ref={audioRef} />;
-  }
+  const isVisible = audioPlaying || !!currentStation;
 
   return (
-    <div className="radio-player hud-panel rounded-sm glow-border">
+    <>
       <audio ref={audioRef} />
-
-      <div className="radio-panel-header">
-        <span className="radio-dot active" />
-        <span className="radio-panel-title">RADIO</span>
-      </div>
-
-      <div className="radio-now-playing-wrap">
-        <div className="radio-now-playing">
-          <div className="radio-eq">
-            <span className="eq-bar" />
-            <span className="eq-bar" />
-            <span className="eq-bar" />
+      {isVisible && (
+        <div className="radio-player hud-panel rounded-sm glow-border">
+          <div className="radio-panel-header">
+            <span className="radio-dot active" />
+            <span className="radio-panel-title">RADIO</span>
           </div>
-          <span className="radio-station-name">{currentLabel}</span>
-          <button className="radio-stop" onClick={handleStop} title="Stop">&#9632;</button>
-        </div>
-        {(nowPlaying.title || nowPlaying.artist) && (
-          <div className="radio-track">
-            {nowPlaying.artist && <span className="radio-artist">{nowPlaying.artist}</span>}
-            {nowPlaying.artist && nowPlaying.title && <span className="radio-sep"> — </span>}
-            {nowPlaying.title && <span className="radio-title-text">{nowPlaying.title}</span>}
-          </div>
-        )}
-      </div>
 
-      <style jsx>{`
+          <div className="radio-now-playing-wrap">
+            <div className="radio-now-playing">
+              <div className="radio-eq">
+                <span className="eq-bar" />
+                <span className="eq-bar" />
+                <span className="eq-bar" />
+              </div>
+              <span className="radio-station-name">{currentLabel}</span>
+              <button className="radio-stop" onClick={handleStop} title="Stop">&#9632;</button>
+            </div>
+            {(nowPlaying.title || nowPlaying.artist) && (
+              <div className="radio-track">
+                {nowPlaying.artist && <span className="radio-artist">{nowPlaying.artist}</span>}
+                {nowPlaying.artist && nowPlaying.title && <span className="radio-sep"> — </span>}
+                {nowPlaying.title && <span className="radio-title-text">{nowPlaying.title}</span>}
+              </div>
+            )}
+          </div>
+
+          <style jsx>{`
         .radio-player { padding: 0; }
         .radio-panel-header {
           display: flex; align-items: center; gap: 6px;
@@ -265,6 +262,9 @@ export function RadioPlayer() {
           50% { transform: scaleY(1); }
         }
       `}</style>
-    </div>
+        </div>
+      )}
+    </>
   );
 }
+
