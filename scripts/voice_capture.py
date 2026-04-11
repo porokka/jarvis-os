@@ -59,7 +59,7 @@ WAKE_WORDS = [
 ]
 WAKE_MODE = "--wake" in sys.argv  # pass --wake for wake word mode
 FUZZY_MODE = "--fuzzy" in sys.argv  # pass --fuzzy to enable fuzzy matching
-AWAKE_TIMEOUT = 60  # seconds of silence before going back to sleep
+AWAKE_TIMEOUT = 30  # seconds before going back to sleep
 
 print("Loading Whisper model...")
 model = whisper.load_model("base")  # base is more accurate for wake word detection
@@ -362,10 +362,16 @@ with sd.InputStream(samplerate=SAMPLE_RATE, channels=1, dtype='float32', blocksi
             log_transcript("NOISE", text)
             continue
 
-        # Long random sentences = TV/background audio, not a command
-        # But allow if it contains a wake word (e.g. "Hey JARVIS, do something long")
-        if not awake and len(words) > 12 and not has_wake_word(text):
-            print(f"  [TV/BG] '{text[:50]}...' — too long for wake word, skipped")
+        # Whisper hallucination: transcribes the initial_prompt on silence
+        if "suomipop" in lower and "radio nova" in lower and "stockwatch" in lower:
+            print(f"  [HALLUCINATION] '{text[:50]}' — initial_prompt leak, skipped")
+            log_transcript("HALLUCINATION", text)
+            continue
+
+        # Long sentences = TV/background audio, not a voice command
+        # Apply even when awake — real commands are short
+        if len(words) > 15 and not has_wake_word(text):
+            print(f"  [TV/BG] '{text[:50]}...' — too long for command, skipped")
             log_transcript("TV/BG", text)
             continue
 
