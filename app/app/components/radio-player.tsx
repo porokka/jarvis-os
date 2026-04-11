@@ -35,7 +35,7 @@ export function RadioPlayer() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const hlsRef = useRef<Hls | null>(null);
 
-  // Also poll ReAct state for voice-triggered radio
+  // Poll ReAct state — restore on page load + sync voice commands
   useEffect(() => {
     let active = true;
     async function poll() {
@@ -45,19 +45,18 @@ export function RadioPlayer() {
         if (!active) return;
 
         if (data.playing && data.station) {
-          // Play if new station OR same station but browser isn't actually playing
           if (data.station !== currentStation || !audioPlaying) {
             playStation(data.station);
           }
         } else if (!data.playing && (currentStation || audioPlaying)) {
           stopPlayback();
         }
-        // Update now-playing metadata
         if (data.now_playing) {
           setNowPlaying(data.now_playing);
         }
       } catch {}
     }
+    poll(); // Immediate — restores state on page load / F5
     const id = setInterval(poll, 3000);
     return () => { active = false; clearInterval(id); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
