@@ -6,6 +6,8 @@ Built by [Sami Porokka](https://poro-it.com) / Poro-IT OÜ
 
 ---
 
+![JARVIS HUD](docs/images/hud.png)
+
 ## Features
 
 - **Multi-Model Routing** — Queries routed to the best local model (fast / reason / code / deep / cloud)
