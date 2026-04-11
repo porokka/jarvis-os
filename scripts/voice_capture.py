@@ -311,6 +311,11 @@ with sd.InputStream(samplerate=SAMPLE_RATE, channels=1, dtype='float32', blocksi
 
     if state in ("thinking", "speaking"):
         last_speaking_end = time.time()
+        # Command is being processed — reset awake state
+        if awake:
+            awake = False
+            awake_until = 0
+            print("  [SLEEP] Command processing — wake word required for next command")
         time.sleep(0.5)
         continue
 
