@@ -245,8 +245,6 @@ export function NetworkMap({ onScanComplete }: { onScanComplete?: () => void } =
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [topology]);
-  const svgWidth = maxX;
-  const svgHeight = maxY;
 
   // Display name: hostname > vendor+type > type+IP
   function displayName(d: Device): string {
