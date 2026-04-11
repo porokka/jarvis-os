@@ -100,6 +100,10 @@ export function NetworkMap({ onScanComplete }: { onScanComplete?: () => void } =
   const [topology, setTopology] = useState<Topology>({ devices: [], gateway: "192.168.0.1", subnet: "" });
   const [selectedDevice, setSelectedDevice] = useState<Device | null>(null);
   const [scanning, setScanning] = useState(false);
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [dragging, setDragging] = useState(false);
+  const dragStartRef = useRef({ x: 0, y: 0, panX: 0, panY: 0 });
   const lastScanRef = useRef(0);
 
   // Poll for topology — detect fresh scans
@@ -154,106 +158,92 @@ export function NetworkMap({ onScanComplete }: { onScanComplete?: () => void } =
   };
 
   // Layout: 3-tier hierarchy — router → infrastructure → end devices
-  const INFRA_TYPES = new Set(["switch", "ap"]);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
 
-  // Tree layout: each infra node is a branch, children hang below it
-  const { layout, connections } = useMemo(() => {
+  // Tree layout: compact branches, max 3 children per column per branch
+  const INFRA_TYPES_SET = new Set(["switch", "ap"]);
+
+  const { layout, connections, svgW, svgH } = useMemo(() => {
     const devices = topology.devices || [];
-    if (devices.length === 0) return { layout: [], connections: [] };
+    if (devices.length === 0) return { layout: [], connections: [], svgW: 600, svgH: 300 };
 
     const router = devices.find(d => d.type === "router");
-    const infra = devices.filter(d => d.type !== "router" && INFRA_TYPES.has(d.type));
-    const endpoints = devices.filter(d => d.type !== "router" && !INFRA_TYPES.has(d.type));
+    const infra = devices.filter(d => d.type !== "router" && INFRA_TYPES_SET.has(d.type));
+    const endpoints = devices.filter(d => d.type !== "router" && !INFRA_TYPES_SET.has(d.type));
 
     const positioned: { device: Device; x: number; y: number; tier: number }[] = [];
     const conns: { from: number; to: number }[] = [];
 
-    // Distribute endpoints evenly across branches
-    // Each branch = 1 infra device (or router if no infra)
-    const branches: Device[][] = [];
-    if (infra.length > 0) {
-      for (let i = 0; i < infra.length; i++) branches.push([]);
-      for (let i = 0; i < endpoints.length; i++) {
-        branches[i % infra.length].push(endpoints[i]);
-      }
-    } else {
-      branches.push([...endpoints]);
+    // Distribute endpoints across branches (infra devices or router)
+    const branchCount = Math.max(infra.length, 1);
+    const branches: Device[][] = Array.from({ length: branchCount }, () => []);
+    for (let i = 0; i < endpoints.length; i++) {
+      branches[i % branchCount].push(endpoints[i]);
     }
 
-    // Calculate widths for each branch
-    const leafW = 110;
-    const leafH = 60;
-    const branchGap = 40;
-    const branchWidths = branches.map(b => Math.max(1, b.length) * leafW);
-    const totalW = branchWidths.reduce((a, b) => a + b, 0) + (branches.length - 1) * branchGap;
-    const svgW = Math.max(totalW + 80, 600);
+    // Each branch: max 3 cols of children, stacking rows
+    const leafW = 105;
+    const leafH = 55;
+    const maxColsPerBranch = 3;
+    const branchGap = 30;
 
-    // Tier 0: Router at top center
-    const routerIdx = 0;
+    // Calc branch widths
+    const branchWidths = branches.map(b => Math.min(b.length, maxColsPerBranch) * leafW);
+    const totalW = branchWidths.reduce((a, b) => a + b, 0) + (branchCount - 1) * branchGap;
+    const canvasW = Math.max(totalW + 100, 500);
+    const centerX = canvasW / 2;
+
+    // Tier 0: Router
     if (router) {
-      positioned.push({ device: router, x: svgW / 2, y: 40, tier: 0 });
+      positioned.push({ device: router, x: centerX, y: 40, tier: 0 });
     }
 
-    // Tier 1 + 2: Branches
-    let branchX = (svgW - totalW) / 2;
+    // Tier 1 + 2
+    let branchX = (canvasW - totalW) / 2;
+    let maxEndY = 0;
 
-    for (let bi = 0; bi < branches.length; bi++) {
+    for (let bi = 0; bi < branchCount; bi++) {
       const children = branches[bi];
       const bw = branchWidths[bi];
       const branchCenterX = branchX + bw / 2;
 
-      // Place infra node
+      // Infra node at tier 1
+      const parentIdx = infra.length > 0 ? positioned.length : 0;
       if (infra.length > 0) {
-        const infraIdx = positioned.length;
+        positioned.push({ device: infra[bi], x: branchCenterX, y: 130, tier: 1 });
+        if (router) conns.push({ from: 0, to: parentIdx });
+      }
+
+      // Children in grid under this branch
+      const cols = Math.min(children.length, maxColsPerBranch);
+      for (let ci = 0; ci < children.length; ci++) {
+        const col = ci % cols;
+        const row = Math.floor(ci / cols);
+        const childIdx = positioned.length;
+        const startX = branchCenterX - ((cols - 1) * leafW) / 2;
+        const y = (infra.length > 0 ? 220 : 130) + row * leafH;
+
         positioned.push({
-          device: infra[bi],
-          x: branchCenterX,
-          y: 140,
-          tier: 1,
+          device: children[ci],
+          x: startX + col * leafW,
+          y,
+          tier: 2,
         });
-        if (router) conns.push({ from: routerIdx, to: infraIdx });
-
-        // Place children below this infra node
-        const childStartX = branchX + leafW / 2;
-        for (let ci = 0; ci < children.length; ci++) {
-          const childIdx = positioned.length;
-          const row = Math.floor(ci / Math.max(1, Math.ceil(children.length / 2)));
-          const col = ci % Math.max(1, Math.ceil(children.length / 2));
-          const colCount = Math.min(children.length, Math.ceil(children.length / 2));
-          const startX = branchCenterX - ((colCount - 1) * leafW) / 2;
-
-          positioned.push({
-            device: children[ci],
-            x: startX + col * leafW,
-            y: 240 + row * leafH,
-            tier: 2,
-          });
-          conns.push({ from: infraIdx, to: childIdx });
-        }
-      } else {
-        // No infra — children connect directly to router
-        const childStartX = branchX + leafW / 2;
-        for (let ci = 0; ci < children.length; ci++) {
-          const childIdx = positioned.length;
-          positioned.push({
-            device: children[ci],
-            x: childStartX + ci * leafW,
-            y: 140 + Math.floor(ci / 5) * leafH,
-            tier: 2,
-          });
-          if (router) conns.push({ from: routerIdx, to: childIdx });
-        }
+        conns.push({ from: parentIdx, to: childIdx });
+        if (y > maxEndY) maxEndY = y;
       }
 
       branchX += bw + branchGap;
     }
 
-    return { layout: positioned, connections: conns };
+    return {
+      layout: positioned,
+      connections: conns,
+      svgW: canvasW,
+      svgH: maxEndY + 60,
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [topology]);
-
-  const maxX = layout.length > 0 ? Math.max(600, ...layout.map(l => l.x + 60)) : 600;
-  const maxY = layout.length > 0 ? Math.max(300, ...layout.map(l => l.y + 50)) : 300;
   const svgWidth = maxX;
   const svgHeight = maxY;
 
@@ -288,13 +278,50 @@ export function NetworkMap({ onScanComplete }: { onScanComplete?: () => void } =
         </button>
       </div>
 
+      {/* Zoom controls */}
+      {layout.length > 0 && (
+        <div className="nm-zoom">
+          <button onClick={() => setZoom(z => Math.min(3, z + 0.25))}>+</button>
+          <span className="nm-zoom-level">{Math.round(zoom * 100)}%</span>
+          <button onClick={() => setZoom(z => Math.max(0.3, z - 0.25))}>&minus;</button>
+          <button onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }} className="nm-zoom-reset">FIT</button>
+        </div>
+      )}
+
       {layout.length === 0 ? (
         <div className="nm-empty">
           <span>No topology data. Click SCAN to discover devices.</span>
         </div>
       ) : (
-        <div className="nm-svg-wrap">
-          <svg viewBox={`0 0 ${svgWidth} ${svgHeight}`} className="nm-svg">
+        <div
+          className="nm-svg-wrap"
+          onMouseDown={e => {
+            setDragging(true);
+            dragStartRef.current = { x: e.clientX, y: e.clientY, panX: pan.x, panY: pan.y };
+          }}
+          onMouseMove={e => {
+            if (!dragging) return;
+            setPan({
+              x: dragStartRef.current.panX + (e.clientX - dragStartRef.current.x),
+              y: dragStartRef.current.panY + (e.clientY - dragStartRef.current.y),
+            });
+          }}
+          onMouseUp={() => setDragging(false)}
+          onMouseLeave={() => setDragging(false)}
+          onWheel={e => {
+            e.preventDefault();
+            setZoom(z => Math.min(3, Math.max(0.3, z + (e.deltaY < 0 ? 0.1 : -0.1))));
+          }}
+        >
+          <svg
+            viewBox={`0 0 ${svgW} ${svgH}`}
+            className="nm-svg"
+            style={{
+              transform: `scale(${zoom}) translate(${pan.x / zoom}px, ${pan.y / zoom}px)`,
+              transformOrigin: "center top",
+              cursor: dragging ? "grabbing" : "grab",
+            }}
+          >
             {/* Tree connection lines */}
             {connections.map((conn, i) => {
               const from = layout[conn.from];
@@ -479,6 +506,24 @@ export function NetworkMap({ onScanComplete }: { onScanComplete?: () => void } =
           animation: scan-pulse 1s ease-in-out infinite;
         }
         .nm-scan-btn:disabled { cursor: wait; }
+        .nm-zoom {
+          display: flex; align-items: center; gap: 4px;
+          padding: 0 12px 6px; justify-content: flex-end;
+        }
+        .nm-zoom button {
+          width: 22px; height: 22px; display: flex; align-items: center; justify-content: center;
+          font-size: 12px; color: rgba(255,255,255,0.3); background: rgba(255,255,255,0.03);
+          border: 1px solid rgba(255,255,255,0.08); border-radius: 3px;
+          cursor: pointer; transition: all 0.2s;
+        }
+        .nm-zoom button:hover { color: var(--accent); border-color: var(--accent); }
+        .nm-zoom-level {
+          font-size: 8px; color: rgba(255,255,255,0.25); min-width: 32px; text-align: center;
+          font-family: 'SF Mono', monospace;
+        }
+        .nm-zoom-reset {
+          font-size: 7px !important; letter-spacing: 1px; width: auto !important; padding: 0 6px !important;
+        }
         .nm-empty {
           padding: 20px 12px; text-align: center;
           font-size: 9px; color: rgba(255,255,255,0.2);
