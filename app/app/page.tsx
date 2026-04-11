@@ -213,9 +213,6 @@ export default function JarvisPage() {
   const [chatOpen, setChatOpen] = useState(false);
 
   const historyEndRef = useRef<HTMLDivElement>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
-  const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
@@ -358,47 +355,41 @@ export default function JarvisPage() {
     return new Blob([arrayBuffer], { type: "audio/wav" });
   }
 
-  // ─── Browser voice: record → Whisper → send ───
-  const stopRecording = useCallback(() => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
-      mediaRecorderRef.current.stop();
+  // ─── Browser voice: always-on with wake word ───
+  const WAKE_WORDS = ["hey jarvis", "ok jarvis", "jarvis", "hey travis", "hey jervis", "hey charvis"];
+  const AWAKE_TIMEOUT = 60_000; // 60s of listening after wake word
+  const awakeUntilRef = useRef(0);
+  const alwaysOnRef = useRef(false);
+  const [micActive, setMicActive] = useState(false);
+
+  function hasWakeWord(text: string): boolean {
+    const lower = text.toLowerCase();
+    return WAKE_WORDS.some(w => lower.includes(w));
+  }
+
+  function stripWakeWord(text: string): string {
+    let lower = text.toLowerCase();
+    for (const wake of WAKE_WORDS) {
+      const idx = lower.indexOf(wake);
+      if (idx !== -1 && idx < 20) {
+        return text.slice(idx + wake.length).replace(/^[,.\s]+/, "").trim();
+      }
     }
-    if (silenceTimerRef.current) {
-      clearTimeout(silenceTimerRef.current);
-      silenceTimerRef.current = null;
-    }
-  }, []);
+    return text;
+  }
 
-  const startRecording = useCallback(async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      streamRef.current = stream;
-
-      // Set up silence detection via analyser
-      const audioCtx = new AudioContext();
-      const source = audioCtx.createMediaStreamSource(stream);
-      const analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 512;
-      source.connect(analyser);
-      analyserRef.current = analyser;
-
+  // Record a single utterance → WAV → Whisper → return text
+  async function captureUtterance(stream: MediaStream, _audioCtx: AudioContext, analyser: AnalyserNode): Promise<string> {
+    return new Promise((resolve) => {
       const recorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
-      chunksRef.current = [];
-      mediaRecorderRef.current = recorder;
+      const chunks: Blob[] = [];
 
       recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) chunksRef.current.push(e.data);
+        if (e.data.size > 0) chunks.push(e.data);
       };
 
       recorder.onstop = async () => {
-        // Stop mic
-        stream.getTracks().forEach(t => t.stop());
-        audioCtx.close();
-        setState("thinking");
-
-        const blob = new Blob(chunksRef.current, { type: "audio/webm" });
-
-        // Convert to WAV via AudioContext decode
+        const blob = new Blob(chunks, { type: "audio/webm" });
         try {
           const arrayBuf = await blob.arrayBuffer();
           const decodeCtx = new AudioContext({ sampleRate: 16000 });
@@ -406,53 +397,121 @@ export default function JarvisPage() {
           const wavBlob = audioBufferToWav(audioBuf);
           decodeCtx.close();
 
-          const res = await fetch("/api/transcribe", {
-            method: "POST",
-            body: wavBlob,
-          });
+          const res = await fetch("/api/transcribe", { method: "POST", body: wavBlob });
           const data = await res.json();
-
-          if (data.text && !data.echo) {
-            handleSend(data.text);
-          } else if (data.echo) {
-            console.log("[ECHO] Skipped:", data.text);
-          }
-        } catch (err) {
-          console.error("Transcribe error:", err);
+          resolve(data.echo ? "" : (data.text || ""));
+        } catch {
+          resolve("");
         }
-        setState("standby");
       };
 
-      recorder.start(250); // collect chunks every 250ms
-      setState("listening");
+      recorder.start(250);
 
-      // Auto-stop after silence (check every 300ms)
+      // Silence detection — stop after ~2.5s silence
       let silentFrames = 0;
       const dataArray = new Uint8Array(analyser.frequencyBinCount);
-      const checkSilence = () => {
-        if (!analyserRef.current || recorder.state === "inactive") return;
+      const check = () => {
+        if (recorder.state === "inactive") return;
         analyser.getByteFrequencyData(dataArray);
         const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
-
         if (avg < 5) {
           silentFrames++;
-          if (silentFrames > 8) { // ~2.4s of silence
-            stopRecording();
-            return;
-          }
+          if (silentFrames > 8) { recorder.stop(); return; }
         } else {
           silentFrames = 0;
         }
-        silenceTimerRef.current = setTimeout(checkSilence, 300);
+        setTimeout(check, 300);
       };
-      // Wait 1s before checking silence (let speech start)
-      silenceTimerRef.current = setTimeout(checkSilence, 1000);
+      setTimeout(check, 800);
 
+      // Hard limit — 15s max
+      setTimeout(() => { if (recorder.state !== "inactive") recorder.stop(); }, 15000);
+    });
+  }
+
+  // Wait for speech (volume above threshold)
+  async function waitForSpeech(analyser: AnalyserNode): Promise<boolean> {
+    const dataArray = new Uint8Array(analyser.frequencyBinCount);
+    return new Promise((resolve) => {
+      const check = () => {
+        if (!alwaysOnRef.current) { resolve(false); return; }
+        analyser.getByteFrequencyData(dataArray);
+        const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
+        if (avg > 8) { resolve(true); return; }
+        setTimeout(check, 100);
+      };
+      check();
+    });
+  }
+
+  // Main always-on loop
+  const startAlwaysOn = useCallback(async () => {
+    if (alwaysOnRef.current) return;
+    alwaysOnRef.current = true;
+    setMicActive(true);
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+      const audioCtx = new AudioContext();
+      const source = audioCtx.createMediaStreamSource(stream);
+      const analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 512;
+      source.connect(analyser);
+      analyserRef.current = analyser;
+
+      while (alwaysOnRef.current) {
+        // Skip while JARVIS is talking
+        const curState = state;
+        if (curState === "thinking" || curState === "speaking") {
+          await new Promise(r => setTimeout(r, 500));
+          continue;
+        }
+
+        // Wait for speech
+        const hasSpeech = await waitForSpeech(analyser);
+        if (!hasSpeech) break;
+
+        // Record utterance
+        const text = await captureUtterance(stream, audioCtx, analyser);
+        if (!text || text.length < 3) continue;
+
+        const now = Date.now();
+        const isAwake = now < awakeUntilRef.current;
+
+        if (hasWakeWord(text)) {
+          awakeUntilRef.current = now + AWAKE_TIMEOUT;
+          setState("listening");
+          const command = stripWakeWord(text);
+          if (command && command.length > 2) {
+            handleSend(command);
+          }
+          // Stay awake — listen for follow-up
+        } else if (isAwake) {
+          // Already awake — send as command
+          awakeUntilRef.current = now + AWAKE_TIMEOUT;
+          handleSend(text);
+        }
+        // else: sleeping, ignore
+
+        await new Promise(r => setTimeout(r, 300));
+      }
+
+      stream.getTracks().forEach(t => t.stop());
+      audioCtx.close();
     } catch (err) {
       console.error("Mic error:", err);
-      setState("standby");
     }
-  }, [handleSend, stopRecording]);
+
+    alwaysOnRef.current = false;
+    setMicActive(false);
+    setState("standby");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [handleSend, state]);
+
+  const stopAlwaysOn = useCallback(() => {
+    alwaysOnRef.current = false;
+  }, []);
 
   // ─── Auto-scroll chat ───
   useEffect(() => {
@@ -461,10 +520,10 @@ export default function JarvisPage() {
 
   // ─── Voice toggle ───
   function handleVoiceToggle() {
-    if (state === "listening") {
-      stopRecording();
-    } else if (state === "standby") {
-      startRecording();
+    if (alwaysOnRef.current) {
+      stopAlwaysOn();
+    } else {
+      startAlwaysOn();
     }
   }
 
@@ -635,7 +694,7 @@ export default function JarvisPage() {
 
             {/* Hint */}
             <p className="text-[8px] text-white/15 tracking-[2px] text-center mb-2 uppercase">
-              Click face for voice &middot; Type below for text
+              {micActive ? 'Listening\u2026 say "Hey JARVIS"' : "Click face to start voice"} &middot; Type below for text
             </p>
 
             {/* Input bar */}
