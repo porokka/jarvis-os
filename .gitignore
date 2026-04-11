@@ -57,3 +57,4 @@ config/lg_tv.json
 config/lg_tv_key.json
 config/panasonic_bd.json
 config/network_topology.json
+config/plex.json
