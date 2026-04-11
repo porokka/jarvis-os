@@ -30,6 +30,7 @@ function getBauerUrl(): string {
 export function RadioPlayer() {
   const [currentStation, setCurrentStation] = useState<string | null>(null);
   const [audioPlaying, setAudioPlaying] = useState(false);
+  const [needsClick, setNeedsClick] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [nowPlaying, setNowPlaying] = useState<{ title: string | null; artist: string | null }>({ title: null, artist: null });
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -83,13 +84,23 @@ export function RadioPlayer() {
 
     setCurrentStation(key);
 
+    const tryPlay = () => {
+      audio.play().then(() => {
+        console.log("[RADIO] Playing OK");
+        setAudioPlaying(true);
+        setNeedsClick(false);
+      }).catch((e) => {
+        console.warn("[RADIO] Autoplay blocked:", e.name);
+        setNeedsClick(true);
+        setCurrentStation(key);
+      });
+    };
+
     if (station.type === "hls" && Hls.isSupported()) {
       const hls = new Hls({ enableWorker: true, lowLatencyMode: true });
       hls.loadSource(url);
       hls.attachMedia(audio);
-      hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        audio.play().then(() => setAudioPlaying(true)).catch(() => {});
-      });
+      hls.on(Hls.Events.MANIFEST_PARSED, () => tryPlay());
       hls.on(Hls.Events.ERROR, (_e, data) => {
         if (data.fatal) { setAudioPlaying(false); }
       });
@@ -98,18 +109,7 @@ export function RadioPlayer() {
       console.log("[RADIO] Playing direct:", url.substring(0, 80));
       audio.src = url;
       audio.load();
-      audio.play().then(() => {
-        console.log("[RADIO] Playing OK");
-        setAudioPlaying(true);
-      }).catch((e) => {
-        console.error("[RADIO] Play failed:", e);
-        // Autoplay blocked — retry on next user interaction
-        const resume = () => {
-          audio.play().then(() => setAudioPlaying(true)).catch(() => {});
-          document.removeEventListener("click", resume);
-        };
-        document.addEventListener("click", resume, { once: true });
-      });
+      tryPlay();
     }
   }, []);
 
@@ -145,7 +145,7 @@ export function RadioPlayer() {
   };
 
   const currentLabel = currentStation ? STATIONS[currentStation]?.label : null;
-  const isVisible = audioPlaying || !!currentStation;
+  const isVisible = audioPlaying || !!currentStation || needsClick;
 
   return (
     <>
@@ -159,11 +159,27 @@ export function RadioPlayer() {
 
           <div className="radio-now-playing-wrap">
             <div className="radio-now-playing">
-              <div className="radio-eq">
-                <span className="eq-bar" />
-                <span className="eq-bar" />
-                <span className="eq-bar" />
-              </div>
+              {needsClick ? (
+                <button
+                  className="radio-play-btn"
+                  onClick={() => {
+                    const audio = audioRef.current;
+                    if (audio) {
+                      audio.play().then(() => {
+                        setAudioPlaying(true);
+                        setNeedsClick(false);
+                      }).catch(() => {});
+                    }
+                  }}
+                  title="Click to play (autoplay blocked)"
+                >&#9654;</button>
+              ) : (
+                <div className="radio-eq">
+                  <span className="eq-bar" />
+                  <span className="eq-bar" />
+                  <span className="eq-bar" />
+                </div>
+              )}
               <span className="radio-station-name">{currentLabel}</span>
               <button className="radio-stop" onClick={handleStop} title="Stop">&#9632;</button>
             </div>
@@ -237,6 +253,17 @@ export function RadioPlayer() {
           border-radius: 3px; cursor: pointer; transition: all 0.2s;
         }
         .radio-stop:hover { color: #f04040; border-color: #f0404060; }
+        .radio-play-btn {
+          width: 20px; height: 20px; display: flex; align-items: center;
+          justify-content: center; font-size: 10px; color: #40f080;
+          background: rgba(64,240,128,0.1); border: 1px solid #40f08060;
+          border-radius: 50%; cursor: pointer; animation: play-blink 1.5s ease-in-out infinite;
+        }
+        .radio-play-btn:hover { background: rgba(64,240,128,0.2); }
+        @keyframes play-blink {
+          0%, 100% { opacity: 0.7; }
+          50% { opacity: 1; }
+        }
         .radio-offline { padding: 4px 12px 8px; }
         .radio-stations {
           display: flex; flex-wrap: wrap; gap: 4px; padding: 4px 12px 10px;

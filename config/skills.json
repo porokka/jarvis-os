@@ -11,6 +11,7 @@
     "shell": true,
     "claude_skills": true,
     "lg_tv": true,
-    "network": true
+    "network": true,
+    "panasonic_bd": true
   }
 }
