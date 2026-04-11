@@ -233,6 +233,27 @@ export default function JarvisPage() {
   const stateRef = useRef(state);
   useEffect(() => { stateRef.current = state; }, [state]);
 
+  // ─── Auto-open tabs on scan results ───
+  const lastNetworkScanRef = useRef(0);
+  useEffect(() => {
+    let active = true;
+    const check = async () => {
+      try {
+        const res = await fetch("/api/network", { cache: "no-store" });
+        const data = await res.json();
+        if (!active) return;
+        if (data.scan_time && data.scan_time > lastNetworkScanRef.current && lastNetworkScanRef.current > 0) {
+          openTab("network", "NETWORK");
+        }
+        if (data.scan_time) lastNetworkScanRef.current = data.scan_time;
+      } catch {}
+    };
+    check();
+    const id = setInterval(check, 5000);
+    return () => { active = false; clearInterval(id); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // ─── Check TTS on mount ───
   useEffect(() => {
     fetch("/api/tts")
@@ -786,7 +807,7 @@ export default function JarvisPage() {
           {/* ── Dynamic tab content ── */}
           {activeTab === "network" && (
             <div className="flex-1 overflow-y-auto p-6">
-              <NetworkMap />
+              <NetworkMap onScanComplete={() => openTab("network", "NETWORK")} />
             </div>
           )}
           {activeTab === "logs" && (

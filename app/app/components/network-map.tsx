@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 
 interface Device {
   ip: string;
@@ -96,17 +96,37 @@ function DeviceIcon({ type, x, y, size = 18 }: { type: string; x: number; y: num
   }
 }
 
-export function NetworkMap() {
+export function NetworkMap({ onScanComplete }: { onScanComplete?: () => void } = {}) {
   const [topology, setTopology] = useState<Topology>({ devices: [], gateway: "192.168.0.1", subnet: "" });
   const [hoveredDevice, setHoveredDevice] = useState<Device | null>(null);
   const [scanning, setScanning] = useState(false);
+  const lastScanRef = useRef(0);
 
+  // Poll for topology — detect fresh scans
   useEffect(() => {
-    fetch("/api/network", { cache: "no-store" })
-      .then(r => r.json())
-      .then(d => setTopology(d))
-      .catch(() => {});
-  }, []);
+    let active = true;
+
+    async function poll() {
+      try {
+        const res = await fetch("/api/network", { cache: "no-store" });
+        const data = await res.json();
+        if (!active) return;
+        if (data.devices && data.devices.length > 0) {
+          setTopology(data);
+          // Detect fresh scan
+          if (data.scan_time && data.scan_time > lastScanRef.current && lastScanRef.current > 0) {
+            setScanning(false);
+            onScanComplete?.();
+          }
+          lastScanRef.current = data.scan_time || 0;
+        }
+      } catch {}
+    }
+
+    poll();
+    const id = setInterval(poll, 5000);
+    return () => { active = false; clearInterval(id); };
+  }, [onScanComplete]);
 
   const handleScan = async () => {
     setScanning(true);
