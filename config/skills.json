@@ -9,6 +9,8 @@
     "vault": true,
     "web": true,
     "shell": true,
-    "claude_skills": true
+    "claude_skills": true,
+    "lg_tv": true,
+    "network": true
   }
 }

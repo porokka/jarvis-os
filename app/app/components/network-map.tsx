@@ -459,6 +459,16 @@ export function NetworkMap({ onScanComplete }: { onScanComplete?: () => void } =
                               ADB CONNECT
                             </button>
                           )}
+                          {port === 554 && (
+                            <button
+                              className="nm-port-link"
+                              onClick={() => {
+                                window.open(`http://localhost:4000/api/camera?ip=${selectedDevice.ip}`, "_blank");
+                              }}
+                            >
+                              VIEW &rarr;
+                            </button>
+                          )}
                           {port === 22 && (
                             <span className="nm-port-hint">ssh {selectedDevice.ip}</span>
                           )}
