@@ -26,6 +26,7 @@ import tempfile
 BRIDGE = "/tmp/jarvis"
 INPUT_FILE = os.path.join(BRIDGE, "input.txt")
 STATE_FILE = os.path.join(BRIDGE, "state.txt")
+OUTPUT_FILE = os.path.join(BRIDGE, "output.txt")
 
 VAULT_DIR = "/mnt/d/Jarvis_vault" if os.name != "nt" else "D:/Jarvis_vault"
 TRANSCRIPT_LOG = os.path.join(VAULT_DIR, "transcript.log")
@@ -71,6 +72,45 @@ def get_state():
             return f.read().strip()
     except:
         return "standby"
+
+
+def get_last_output() -> str:
+    """Read JARVIS's last spoken output for echo detection."""
+    try:
+        with open(OUTPUT_FILE) as f:
+            return f.read().strip().lower()
+    except:
+        return ""
+
+
+def is_echo(text: str, threshold: float = 0.5) -> bool:
+    """Check if transcribed text is JARVIS echoing itself.
+
+    Compares against last output — if >50% of words overlap, it's echo.
+    """
+    last = get_last_output()
+    if not last or len(last) < 5:
+        return False
+
+    heard_words = set(text.lower().split())
+    output_words = set(last.split())
+
+    if not heard_words:
+        return False
+
+    # What fraction of heard words appear in JARVIS's last output?
+    overlap = heard_words & output_words
+    ratio = len(overlap) / len(heard_words)
+
+    if ratio >= threshold:
+        return True
+
+    # Also check substring match — Whisper might transcribe a fragment
+    heard_lower = text.lower().strip()
+    if len(heard_lower) > 8 and heard_lower in last:
+        return True
+
+    return False
 
 
 def has_speech_vad(audio_chunk: np.ndarray) -> bool:
@@ -298,6 +338,12 @@ with sd.InputStream(samplerate=SAMPLE_RATE, channels=1, dtype='float32', blocksi
         text = transcribe(audio)
 
         if not text or len(text) < 3:
+            continue
+
+        # Echo detection — skip if JARVIS is hearing itself
+        if is_echo(text):
+            print(f"  [ECHO] '{text}' — matches last output, skipped")
+            log_transcript("ECHO", text)
             continue
 
         # Filter out noise/hallucinations
