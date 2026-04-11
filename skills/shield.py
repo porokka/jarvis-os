@@ -3,8 +3,13 @@ JARVIS Skill — NVIDIA Shield TV control per room.
 
 Controls Shield TVs via ADB + HDMI-CEC. Launches apps, navigates,
 controls playback, and coordinates with Denon for input switching.
+
+Config files (editable by AI):
+  config/rooms.json       — room name → IP mapping
+  config/shield_apps.json — app name → ADB launch command
 """
 
+import json
 import subprocess
 import time
 from pathlib import Path
@@ -12,35 +17,32 @@ from pathlib import Path
 SKILL_NAME = "shield"
 SKILL_DESCRIPTION = "NVIDIA Shield TV — apps, playback, navigation, HDMI-CEC, per-room control"
 
-# -- Room config --
+# -- Config paths --
 
-ROOMS = {
-    "livingroom": {"ip": "192.168.0.31", "name": "Living Room Shield Pro"},
-    "office": {"ip": "", "name": "Office Shield"},
-    "bedroom": {"ip": "", "name": "Bedroom Shield"},
-}
+CONFIG_DIR = Path(__file__).parent.parent / "config"
+ROOMS_CONFIG = CONFIG_DIR / "rooms.json"
+APPS_CONFIG = CONFIG_DIR / "shield_apps.json"
 
-# -- App & command map --
 
-SHIELD_APPS = {
-    # Streaming apps
-    "netflix": "am start -n com.netflix.ninja/.MainActivity",
-    "youtube": "am start -n com.google.android.youtube.tv/com.google.android.apps.youtube.tv.activity.ShellActivity",
-    "spotify": "am start -n com.spotify.tv.android/.SpotifyTVActivity",
-    "plex": "am start -n com.plexapp.android/.activity.SplashActivity",
-    "disney": "am start -n com.disney.disneyplus/.MainActivity",
-    "disney+": "am start -n com.disney.disneyplus/.MainActivity",
-    "hbo": "am start -n com.hbo.hbomax/.MainActivity",
-    "max": "am start -n com.hbo.hbomax/.MainActivity",
-    "prime": "am start -n com.amazon.amazonvideo.livingroom/.MainActivity",
-    "amazon": "am start -n com.amazon.amazonvideo.livingroom/.MainActivity",
-    "apple": "am start -n com.apple.atve.androidtv.appletv/.MainActivity",
-    "appletv": "am start -n com.apple.atve.androidtv.appletv/.MainActivity",
-    "twitch": "am start -n tv.twitch.android.app/.MainActivity",
-    "crunchyroll": "am start -n com.crunchyroll.crunchyroid/.MainActivity",
-    "kodi": "am start -n org.xbmc.kodi/.Splash",
-    "vlc": "am start -n org.videolan.vlc/.StartActivity",
-    # Navigation
+def _load_rooms() -> dict:
+    """Load rooms from config file (re-read each call so AI edits take effect)."""
+    try:
+        return json.loads(ROOMS_CONFIG.read_text(encoding="utf-8"))
+    except Exception:
+        return {"livingroom": {"ip": "192.168.0.31", "name": "Living Room Shield Pro"}}
+
+
+def _load_apps() -> dict:
+    """Load app commands from config file."""
+    try:
+        return json.loads(APPS_CONFIG.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+# -- Navigation commands (built-in, not configurable) --
+
+NAV_COMMANDS_MAP = {
     "home": "input keyevent KEYCODE_HOME",
     "back": "input keyevent KEYCODE_BACK",
     "play": "input keyevent KEYCODE_MEDIA_PLAY_PAUSE",
@@ -56,19 +58,16 @@ SHIELD_APPS = {
     "ok": "input keyevent KEYCODE_DPAD_CENTER",
     "menu": "input keyevent KEYCODE_MENU",
     "settings": "am start -n com.android.tv.settings/.MainSettings",
-    # Power / HDMI
     "sleep": "input keyevent KEYCODE_SLEEP",
     "power": "input keyevent KEYCODE_POWER",
     "wake": "input keyevent KEYCODE_WAKEUP",
     "hdmi-cec-on": "input keyevent KEYCODE_TV",
     "tv-on": "input keyevent KEYCODE_WAKEUP && input keyevent KEYCODE_TV",
-    # Volume (Shield → Denon via CEC)
     "volume-up": "input keyevent KEYCODE_VOLUME_UP",
     "volume-down": "input keyevent KEYCODE_VOLUME_DOWN",
     "mute": "input keyevent KEYCODE_VOLUME_MUTE",
 }
 
-# Navigation commands (don't need wake + input switch)
 NAV_COMMANDS = {
     "home", "back", "up", "down", "left", "right", "select", "ok",
     "play", "pause", "stop", "next", "previous", "menu",
@@ -115,11 +114,12 @@ def _denon_preset(preset: str) -> str:
 
 def exec_room_command(room: str, action: str) -> str:
     """Control a room's NVIDIA Shield + Denon receiver."""
+    rooms = _load_rooms()
     room = room.lower().replace(" ", "")
-    if room not in ROOMS:
-        return f"Unknown room '{room}'. Available: {', '.join(ROOMS.keys())}"
+    if room not in rooms:
+        return f"Unknown room '{room}'. Available: {', '.join(rooms.keys())}"
 
-    ip = ROOMS[room]["ip"]
+    ip = rooms[room]["ip"]
     if not ip:
         return f"No Shield IP configured for {room}. Run scan_network first."
 
@@ -158,12 +158,17 @@ def exec_room_command(room: str, action: str) -> str:
         time.sleep(1)
         _adb(ip, "cmd hdmi_control onetouchplay")
         _denon_switch_input("shield")
-        return f"Activated {ROOMS[room]['name']} — Shield on, Denon switched"
+        return f"Activated {rooms[room]['name']} — Shield on, Denon switched"
 
-    # Direct app/command
-    cmd = SHIELD_APPS.get(action_lower)
+    # Check nav commands first, then apps from config
+    cmd = NAV_COMMANDS_MAP.get(action_lower)
     if not cmd:
-        available = ", ".join(sorted(SHIELD_APPS.keys()))
+        apps = _load_apps()
+        cmd = apps.get(action_lower)
+
+    if not cmd:
+        apps = _load_apps()
+        available = ", ".join(sorted(set(list(NAV_COMMANDS_MAP.keys()) + list(apps.keys()))))
         return f"Unknown action '{action}'. Available: {available}"
 
     # For app launches, wake + switch Denon
@@ -174,7 +179,7 @@ def exec_room_command(room: str, action: str) -> str:
         time.sleep(0.3)
 
     _adb(ip, cmd)
-    return f"{action.capitalize()} on {ROOMS[room]['name']}"
+    return f"{action.capitalize()} on {rooms[room]['name']}"
 
 
 def exec_scan_network() -> str:

@@ -1,0 +1,18 @@
+{
+  "netflix": "am start -n com.netflix.ninja/.MainActivity",
+  "youtube": "am start -n com.google.android.youtube.tv/com.google.android.apps.youtube.tv.activity.ShellActivity",
+  "spotify": "am start -n com.spotify.tv.android/.SpotifyTVActivity",
+  "plex": "am start -n com.plexapp.android/.activity.SplashActivity",
+  "disney": "am start -n com.disney.disneyplus/.MainActivity",
+  "disney+": "am start -n com.disney.disneyplus/.MainActivity",
+  "hbo": "am start -n com.hbo.hbomax/.MainActivity",
+  "max": "am start -n com.hbo.hbomax/.MainActivity",
+  "prime": "am start -n com.amazon.amazonvideo.livingroom/.MainActivity",
+  "amazon": "am start -n com.amazon.amazonvideo.livingroom/.MainActivity",
+  "apple": "am start -n com.apple.atve.androidtv.appletv/.MainActivity",
+  "appletv": "am start -n com.apple.atve.androidtv.appletv/.MainActivity",
+  "twitch": "am start -n tv.twitch.android.app/.MainActivity",
+  "crunchyroll": "am start -n com.crunchyroll.crunchyroid/.MainActivity",
+  "kodi": "am start -n org.xbmc.kodi/.Splash",
+  "vlc": "am start -n org.videolan.vlc/.StartActivity"
+}

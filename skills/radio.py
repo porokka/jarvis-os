@@ -5,24 +5,32 @@ Streams via HTML5 audio in the HUD (primary) or mpv (fallback).
 Tracks playback state so the HUD widget can poll it.
 """
 
+import json
 import subprocess
 import time
 import uuid
+from pathlib import Path
 
 SKILL_NAME = "radio"
 SKILL_DESCRIPTION = "Internet radio — Finnish stations (Nova, SuomiPop, Rock, YLE) + custom streams"
 
-# -- Station registry --
+# -- Station registry (loaded from config/radio.json) --
 
-STATIONS = {
-    "nova": {"type": "bauer", "id": "fi_radionova", "label": "Radio Nova", "fallback": "https://rayo.fi/radio-nova"},
-    "suomipop": {"type": "url", "url": "https://aud-stream-suomipop.nm-elemental.nelonenmedia.fi/playlist.m3u8", "label": "Radio Suomipop", "fallback": "https://rayo.fi/radio-suomipop"},
-    "rock": {"type": "url", "url": "https://aud-stream-radiorock.nm-elemental.nelonenmedia.fi/playlist.m3u8", "label": "Radio Rock", "fallback": "https://rayo.fi/radio-rock"},
-    "yle1": {"type": "url", "url": "https://yleradiolive.akamaized.net/hls/live/2027671/in-YleRadio1/master.m3u8", "label": "YLE Radio 1"},
-    "ylex": {"type": "url", "url": "https://yleradiolive.akamaized.net/hls/live/2027673/in-YleX/master.m3u8", "label": "YLE X"},
+RADIO_CONFIG = Path(__file__).parent.parent / "config" / "radio.json"
+
+# Fallback if config file doesn't exist
+_DEFAULT_STATIONS = {
+    "nova": {"type": "bauer", "id": "fi_radionova", "label": "Radio Nova"},
     "lofi": {"type": "url", "url": "https://play.streamafrica.net/lofiradio", "label": "Lo-Fi Radio"},
-    "chillhop": {"type": "url", "url": "http://stream.zeno.fm/fyn8eh3h5f8uv", "label": "Chillhop"},
 }
+
+
+def _load_stations() -> dict:
+    """Load stations from config file (re-read each call so AI edits take effect)."""
+    try:
+        return json.loads(RADIO_CONFIG.read_text(encoding="utf-8"))
+    except Exception:
+        return _DEFAULT_STATIONS
 
 MPV_PATH = r"C:\Program Files\MPV Player\mpv.exe"
 
@@ -44,7 +52,8 @@ def get_radio_state() -> dict:
 
 def get_stations() -> dict:
     """Return station list for the HUD."""
-    return {k: {"label": v["label"], "type": v["type"]} for k, v in STATIONS.items()}
+    stations = _load_stations()
+    return {k: {"label": v["label"], "type": v["type"]} for k, v in stations.items()}
 
 
 def get_now_playing() -> dict:
@@ -112,7 +121,8 @@ def _get_bauer_stream(station_id: str) -> str:
 
 def resolve_stream_url(station_key: str) -> tuple[str | None, str | None, str | None]:
     """Resolve station key to (stream_url, label, fallback). Returns (None,None,None) if unknown."""
-    cfg = STATIONS.get(station_key.lower().strip())
+    stations = _load_stations()
+    cfg = stations.get(station_key.lower().strip())
     if cfg:
         if cfg["type"] == "bauer":
             url = _get_bauer_stream(cfg["id"])
@@ -167,10 +177,10 @@ def exec_play_radio(station: str) -> str:
 
     url, label, fallback = resolve_stream_url(station)
     if not url:
-        available = ", ".join(STATIONS.keys())
+        available = ", ".join(_load_stations().keys())
         return f"Unknown station '{station}'. Available: {available}. Or provide a stream URL."
 
-    station_key = station.lower().strip() if station.lower().strip() in STATIONS else "custom"
+    station_key = station.lower().strip() if station.lower().strip() in _load_stations() else "custom"
 
     # Kill existing mpv
     _kill_mpv()

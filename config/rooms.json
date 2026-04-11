@@ -1,0 +1,14 @@
+{
+  "livingroom": {
+    "ip": "192.168.0.31",
+    "name": "Living Room Shield Pro"
+  },
+  "office": {
+    "ip": "",
+    "name": "Office Shield"
+  },
+  "bedroom": {
+    "ip": "",
+    "name": "Bedroom Shield"
+  }
+}
