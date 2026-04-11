@@ -433,12 +433,18 @@ export default function JarvisPage() {
     });
   }
 
-  // Wait for speech (volume above threshold)
-  function waitForSpeech(analyser: AnalyserNode): Promise<boolean> {
+  // Wait for speech (volume above threshold), with timeout
+  function waitForSpeech(analyser: AnalyserNode, timeoutMs = 30000): Promise<boolean> {
     const dataArray = new Uint8Array(analyser.frequencyBinCount);
+    const start = Date.now();
     return new Promise((resolve) => {
       const check = () => {
         if (!alwaysOnRef.current) { resolve(false); return; }
+        if (Date.now() - start > timeoutMs) {
+          // Timeout — just loop again (don't exit)
+          resolve(true);
+          return;
+        }
         analyser.getByteFrequencyData(dataArray);
         const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
         if (avg > 8) { resolve(true); return; }
@@ -493,13 +499,12 @@ export default function JarvisPage() {
 
         if (hasWakeWord(text)) {
           awakeUntilRef.current = now + AWAKE_TIMEOUT;
-          setState("listening");
           const command = stripWakeWord(text);
           if (command && command.length > 2) {
             console.log("[JARVIS] Wake + command:", command);
             handleSend(command);
           } else {
-            console.log("[JARVIS] Awake — listening for command...");
+            console.log("[JARVIS] Awake — listening for 60s...");
           }
         } else if (isAwake) {
           console.log("[JARVIS] Command:", text);
@@ -509,8 +514,11 @@ export default function JarvisPage() {
           console.log("[JARVIS] Sleeping, ignored:", text);
         }
 
-        await new Promise(r => setTimeout(r, 300));
+        // Brief pause before next listen cycle
+        await new Promise(r => setTimeout(r, 500));
       }
+
+      // Only reach here if alwaysOnRef was set to false
 
       stream.getTracks().forEach(t => t.stop());
       audioCtx.close();
