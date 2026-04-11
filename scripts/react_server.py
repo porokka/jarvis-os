@@ -39,20 +39,23 @@ MAX_ITERATIONS = 5
 VAULT_DIR = Path("/mnt/d/Jarvis_vault") if os.name != "nt" else Path("D:/Jarvis_vault")
 
 
+POWERSHELL = "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
+
+
 def speak_ack(text: str):
     """Speak ACK via PowerShell TTS in background thread — non-blocking."""
     def _speak():
         try:
             safe = text.replace("'", "''")
             subprocess.run(
-                ['powershell.exe', '-Command',
+                [POWERSHELL, '-Command',
                  f"Add-Type -AssemblyName System.Speech; "
                  f"$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
                  f"$s.Rate = 2; $s.Speak('{safe}')"],
                 timeout=10, capture_output=True,
             )
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[REACT] ACK TTS error: {e}")
     threading.Thread(target=_speak, daemon=True).start()
 
 # -- Load all skills --
