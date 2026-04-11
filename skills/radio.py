@@ -137,9 +137,6 @@ def exec_play_radio(station: str) -> str:
         "started_at": time.time(),
     }
 
-    # Also try mpv as fallback (in case HUD isn't open)
-    _start_mpv(url)
-
     return f"Now playing: {label}"
 
 

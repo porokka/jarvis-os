@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import Hls from "hls.js";
 
 interface RadioState {
   playing: boolean;
@@ -19,8 +20,10 @@ export function RadioPlayer() {
     stations: {},
   });
   const [audioPlaying, setAudioPlaying] = useState(false);
+  const [needsInteraction, setNeedsInteraction] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const hlsRef = useRef<Hls | null>(null);
   const lastUrlRef = useRef<string | null>(null);
 
   // Poll radio state from ReAct server
@@ -40,6 +43,68 @@ export function RadioPlayer() {
     return () => { active = false; clearInterval(id); };
   }, []);
 
+  // Clean up HLS on unmount
+  useEffect(() => {
+    return () => {
+      if (hlsRef.current) {
+        hlsRef.current.destroy();
+        hlsRef.current = null;
+      }
+    };
+  }, []);
+
+  const playStream = useCallback((url: string) => {
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    // Destroy previous HLS instance
+    if (hlsRef.current) {
+      hlsRef.current.destroy();
+      hlsRef.current = null;
+    }
+
+    const isHls = url.includes(".m3u8");
+
+    if (isHls && Hls.isSupported()) {
+      const hls = new Hls({
+        enableWorker: true,
+        lowLatencyMode: true,
+      });
+      hls.loadSource(url);
+      hls.attachMedia(audio);
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        audio.play().then(() => {
+          setAudioPlaying(true);
+          setNeedsInteraction(false);
+        }).catch(() => {
+          setNeedsInteraction(true);
+        });
+      });
+      hlsRef.current = hls;
+    } else if (isHls && audio.canPlayType("application/vnd.apple.mpegurl")) {
+      // Native HLS (Safari)
+      audio.src = url;
+      audio.play().then(() => {
+        setAudioPlaying(true);
+        setNeedsInteraction(false);
+      }).catch(() => {
+        setNeedsInteraction(true);
+      });
+    } else {
+      // Direct stream (AAC, MP3, etc.)
+      audio.src = url;
+      audio.load();
+      audio.play().then(() => {
+        setAudioPlaying(true);
+        setNeedsInteraction(false);
+      }).catch(() => {
+        setNeedsInteraction(true);
+      });
+    }
+
+    lastUrlRef.current = url;
+  }, []);
+
   // Sync audio element with radio state
   useEffect(() => {
     const audio = audioRef.current;
@@ -47,23 +112,32 @@ export function RadioPlayer() {
 
     if (radio.playing && radio.stream_url) {
       if (radio.stream_url !== lastUrlRef.current) {
-        // New station — load and play
-        audio.src = radio.stream_url;
-        audio.load();
-        audio.play().catch(() => {});
-        lastUrlRef.current = radio.stream_url;
-        setAudioPlaying(true);
+        playStream(radio.stream_url);
       }
     } else if (!radio.playing && lastUrlRef.current) {
-      // Stopped
       audio.pause();
       audio.src = "";
+      if (hlsRef.current) {
+        hlsRef.current.destroy();
+        hlsRef.current = null;
+      }
       lastUrlRef.current = null;
       setAudioPlaying(false);
+      setNeedsInteraction(false);
     }
-  }, [radio.playing, radio.stream_url]);
+  }, [radio.playing, radio.stream_url, playStream]);
 
-  // Send command to JARVIS via input bridge
+  // User clicked play after autoplay was blocked
+  const handleUnblock = () => {
+    const audio = audioRef.current;
+    if (audio) {
+      audio.play().then(() => {
+        setAudioPlaying(true);
+        setNeedsInteraction(false);
+      }).catch(() => {});
+    }
+  };
+
   const sendCommand = useCallback(async (command: string) => {
     try {
       await fetch("/api/input", {
@@ -75,14 +149,18 @@ export function RadioPlayer() {
   }, []);
 
   const handleStop = () => {
-    // Stop locally immediately
     const audio = audioRef.current;
     if (audio) {
       audio.pause();
       audio.src = "";
     }
+    if (hlsRef.current) {
+      hlsRef.current.destroy();
+      hlsRef.current = null;
+    }
     lastUrlRef.current = null;
     setAudioPlaying(false);
+    setNeedsInteraction(false);
     setRadio(prev => ({ ...prev, playing: false, station: null, label: null, stream_url: null }));
     sendCommand("stop radio");
   };
@@ -95,7 +173,6 @@ export function RadioPlayer() {
 
   return (
     <div className="radio-player">
-      {/* Hidden audio element */}
       <audio ref={audioRef} crossOrigin="anonymous" />
 
       {/* Header */}
@@ -108,11 +185,19 @@ export function RadioPlayer() {
       {/* Now playing */}
       {radio.playing && radio.label && (
         <div className="radio-now-playing">
-          <div className="radio-eq">
-            <span className="eq-bar" />
-            <span className="eq-bar" />
-            <span className="eq-bar" />
-          </div>
+          {audioPlaying ? (
+            <div className="radio-eq">
+              <span className="eq-bar" />
+              <span className="eq-bar" />
+              <span className="eq-bar" />
+            </div>
+          ) : needsInteraction ? (
+            <button className="radio-play-btn" onClick={handleUnblock} title="Click to play">
+              &#9654;
+            </button>
+          ) : (
+            <div className="radio-loading" />
+          )}
           <span className="radio-station-name">{radio.label}</span>
           <button className="radio-stop" onClick={handleStop} title="Stop">
             &#9632;
@@ -199,6 +284,31 @@ export function RadioPlayer() {
         .eq-bar:nth-child(1) { height: 4px; animation-delay: 0s; }
         .eq-bar:nth-child(2) { height: 8px; animation-delay: 0.2s; }
         .eq-bar:nth-child(3) { height: 6px; animation-delay: 0.4s; }
+        .radio-play-btn {
+          width: 18px;
+          height: 18px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 10px;
+          color: #40f080;
+          background: rgba(64, 240, 128, 0.1);
+          border: 1px solid #40f08060;
+          border-radius: 50%;
+          cursor: pointer;
+          animation: play-pulse 1.5s ease-in-out infinite;
+        }
+        .radio-play-btn:hover {
+          background: rgba(64, 240, 128, 0.2);
+        }
+        .radio-loading {
+          width: 12px;
+          height: 12px;
+          border: 1.5px solid rgba(255, 255, 255, 0.1);
+          border-top-color: var(--accent);
+          border-radius: 50%;
+          animation: spin 0.8s linear infinite;
+        }
         .radio-station-name {
           font-size: 10px;
           color: rgba(255, 255, 255, 0.7);
@@ -263,6 +373,13 @@ export function RadioPlayer() {
         @keyframes eq-bounce {
           0%, 100% { transform: scaleY(0.4); }
           50% { transform: scaleY(1); }
+        }
+        @keyframes play-pulse {
+          0%, 100% { opacity: 0.7; }
+          50% { opacity: 1; }
+        }
+        @keyframes spin {
+          to { transform: rotate(360deg); }
         }
       `}</style>
     </div>
