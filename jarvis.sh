@@ -71,7 +71,7 @@ do_start() {
   fi
 
   log "Loading qwen3:30b-a3b (main brain — permanent)..."
-  ollama run qwen3:30b-a3b --keepalive 0 "" > /dev/null 2>&1 &
+  ollama run qwen3:30b-a3b --keepalive -1 "" > /dev/null 2>&1 &
   echo "$! qwen3-main" >> "$PIDFILE"
 
   # Coder loads on demand (swaps with main when code keywords detected)
