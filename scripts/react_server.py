@@ -274,6 +274,17 @@ class ReactHandler(BaseHTTPRequestHandler):
                 self._json_response({"timers": []})
             return
 
+        if path == "/api/radio":
+            try:
+                from skills.radio import get_radio_state, get_stations
+                self._json_response({
+                    **get_radio_state(),
+                    "stations": get_stations(),
+                })
+            except ImportError:
+                self._json_response({"playing": False, "stations": {}})
+            return
+
         if path == "/api/skills":
             self._json_response({"skills": get_loaded_skills()})
             return

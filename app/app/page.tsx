@@ -10,6 +10,7 @@ import { GpuMonitor } from "./components/gpu-monitor";
 import { SystemLog } from "./components/system-log";
 import { TimersWidget } from "./components/timers-widget";
 import { SettingsPanel } from "./components/settings-panel";
+import { RadioPlayer } from "./components/radio-player";
 
 type JarvisState = "standby" | "listening" | "thinking" | "speaking" | "asking";
 
@@ -458,6 +459,7 @@ export default function JarvisPage() {
                 </span>
               </div>
             </div>
+            <RadioPlayer />
           </HudPanel>
         </aside>
 

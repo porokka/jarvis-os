@@ -1,8 +1,8 @@
 """
-JARVIS Skill — Internet radio streaming via mpv.
+JARVIS Skill — Internet radio streaming.
 
-Finnish stations + international streams. Uses mpv for playback,
-with browser fallback for Bauer Media stations.
+Streams via HTML5 audio in the HUD (primary) or mpv (fallback).
+Tracks playback state so the HUD widget can poll it.
 """
 
 import subprocess
@@ -10,22 +10,44 @@ import time
 import uuid
 
 SKILL_NAME = "radio"
-SKILL_DESCRIPTION = "Internet radio — Finnish stations (Nova, SuomiPop, Rock, YLE) + custom streams via mpv"
+SKILL_DESCRIPTION = "Internet radio — Finnish stations (Nova, SuomiPop, Rock, YLE) + custom streams"
 
 # -- Station registry --
 
 STATIONS = {
-    "nova": {"type": "bauer", "id": "fi_radionova", "fallback": "https://rayo.fi/radio-nova"},
-    "suomipop": {"type": "url", "url": "https://www.supla.fi/radiosuomipop", "fallback": "https://rayo.fi/radio-suomipop"},
-    "rock": {"type": "url", "url": "https://www.supla.fi/radiorock", "fallback": "https://rayo.fi/radio-rock"},
-    "yle1": {"type": "url", "url": "https://yleradiolive.akamaized.net/hls/live/2027671/in-YleRadio1/master.m3u8"},
-    "ylex": {"type": "url", "url": "https://yleradiolive.akamaized.net/hls/live/2027673/in-YleX/master.m3u8"},
-    "lofi": {"type": "url", "url": "https://play.streamafrica.net/lofiradio"},
-    "chillhop": {"type": "url", "url": "http://stream.zeno.fm/fyn8eh3h5f8uv"},
+    "nova": {"type": "bauer", "id": "fi_radionova", "label": "Radio Nova", "fallback": "https://rayo.fi/radio-nova"},
+    "suomipop": {"type": "url", "url": "https://www.supla.fi/radiosuomipop", "label": "Radio Suomipop", "fallback": "https://rayo.fi/radio-suomipop"},
+    "rock": {"type": "url", "url": "https://www.supla.fi/radiorock", "label": "Radio Rock", "fallback": "https://rayo.fi/radio-rock"},
+    "yle1": {"type": "url", "url": "https://yleradiolive.akamaized.net/hls/live/2027671/in-YleRadio1/master.m3u8", "label": "YLE Radio 1"},
+    "ylex": {"type": "url", "url": "https://yleradiolive.akamaized.net/hls/live/2027673/in-YleX/master.m3u8", "label": "YLE X"},
+    "lofi": {"type": "url", "url": "https://play.streamafrica.net/lofiradio", "label": "Lo-Fi Radio"},
+    "chillhop": {"type": "url", "url": "http://stream.zeno.fm/fyn8eh3h5f8uv", "label": "Chillhop"},
 }
 
 MPV_PATH = r"C:\Program Files\MPV Player\mpv.exe"
 
+# -- Playback state (polled by HUD) --
+
+_radio_state = {
+    "playing": False,
+    "station": None,
+    "label": None,
+    "stream_url": None,
+    "started_at": None,
+}
+
+
+def get_radio_state() -> dict:
+    """Return current radio state for the API."""
+    return dict(_radio_state)
+
+
+def get_stations() -> dict:
+    """Return station list for the HUD."""
+    return {k: {"label": v["label"], "type": v["type"]} for k, v in STATIONS.items()}
+
+
+# -- Stream URL helpers --
 
 def _get_bauer_stream(station_id: str) -> str:
     """Generate fresh Bauer Media stream URL with session tokens."""
@@ -41,8 +63,23 @@ def _get_bauer_stream(station_id: str) -> str:
     )
 
 
+def resolve_stream_url(station_key: str) -> tuple[str | None, str | None, str | None]:
+    """Resolve station key to (stream_url, label, fallback). Returns (None,None,None) if unknown."""
+    cfg = STATIONS.get(station_key.lower().strip())
+    if cfg:
+        if cfg["type"] == "bauer":
+            url = _get_bauer_stream(cfg["id"])
+        else:
+            url = cfg["url"]
+        return url, cfg["label"], cfg.get("fallback")
+    elif station_key.startswith("http"):
+        return station_key, "Custom Stream", None
+    return None, None, None
+
+
+# -- mpv helpers (fallback when HUD isn't available) --
+
 def _kill_mpv():
-    """Stop any running mpv process."""
     subprocess.run(
         ['powershell.exe', '-Command', 'Stop-Process -Name mpv -Force -ErrorAction SilentlyContinue'],
         capture_output=True,
@@ -50,7 +87,6 @@ def _kill_mpv():
 
 
 def _start_mpv(url: str) -> bool:
-    """Start mpv with stream URL. Returns True if mpv stays running."""
     subprocess.Popen(
         ['powershell.exe', '-Command',
          f'Start-Process "{MPV_PATH}" -ArgumentList \'--no-video\',\'--really-quiet\',\'{url}\''],
@@ -65,7 +101,6 @@ def _start_mpv(url: str) -> bool:
 
 
 def _open_browser(url: str):
-    """Open URL in default browser."""
     subprocess.Popen(
         ['powershell.exe', '-Command', f'Start-Process "{url}"'],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -76,41 +111,36 @@ def _open_browser(url: str):
 
 def exec_play_radio(station: str) -> str:
     """Play internet radio or stop current playback."""
+    global _radio_state
+
     if station.lower() == "stop":
         _kill_mpv()
+        _radio_state = {"playing": False, "station": None, "label": None, "stream_url": None, "started_at": None}
         return "Radio stopped."
 
-    # Look up station or treat as direct URL
-    station_key = station.lower().strip()
-    station_cfg = STATIONS.get(station_key)
-
-    if station_cfg:
-        # Known station
-        if station_cfg["type"] == "bauer":
-            url = _get_bauer_stream(station_cfg["id"])
-        else:
-            url = station_cfg["url"]
-        fallback = station_cfg.get("fallback")
-        name = station_key
-    elif station.startswith("http"):
-        # Direct stream URL
-        url = station
-        fallback = None
-        name = "custom stream"
-    else:
+    url, label, fallback = resolve_stream_url(station)
+    if not url:
         available = ", ".join(STATIONS.keys())
         return f"Unknown station '{station}'. Available: {available}. Or provide a stream URL."
 
-    # Kill existing, start new
+    station_key = station.lower().strip() if station.lower().strip() in STATIONS else "custom"
+
+    # Kill existing mpv
     _kill_mpv()
 
-    if _start_mpv(url):
-        return f"Now playing: {name}"
-    elif fallback:
-        _open_browser(fallback)
-        return f"Stream expired, opened {name} in browser instead"
-    else:
-        return f"Failed to play {name} — stream may be expired"
+    # Update state — HUD will pick this up and play via HTML5 audio
+    _radio_state = {
+        "playing": True,
+        "station": station_key,
+        "label": label,
+        "stream_url": url,
+        "started_at": time.time(),
+    }
+
+    # Also try mpv as fallback (in case HUD isn't open)
+    _start_mpv(url)
+
+    return f"Now playing: {label}"
 
 
 # -- Tool definitions --
