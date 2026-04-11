@@ -46,3 +46,14 @@ bridge/
 # Next.js
 .next/
 app/.next/
+
+# Personal configs (use .example files as templates)
+config/denon.json
+config/rooms.json
+config/radio.json
+config/skills.json
+config/shield_apps.json
+config/lg_tv.json
+config/lg_tv_key.json
+config/panasonic_bd.json
+config/network_topology.json

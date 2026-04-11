@@ -1,5 +1,6 @@
 """Quick SSDP scanner — find UPnP devices on LAN."""
 import socket
+import sys
 
 SSDP_MSG = (
     'M-SEARCH * HTTP/1.1\r\n'
@@ -10,17 +11,32 @@ SSDP_MSG = (
     '\r\n'
 )
 
+target = sys.argv[1] if len(sys.argv) > 1 else None
+
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 s.settimeout(4)
 s.sendto(SSDP_MSG.encode(), ("239.255.255.250", 1900))
 
-target = "192.168.0.209"
+seen = set()
 try:
     while True:
         data, addr = s.recvfrom(4096)
-        if addr[0] == target:
-            print(data.decode("utf-8", errors="replace"))
-            print("---")
+        ip = addr[0]
+        if target and ip != target:
+            continue
+        if ip not in seen:
+            seen.add(ip)
+            text = data.decode("utf-8", errors="replace")
+            srv = ""
+            for line in text.split("\r\n"):
+                if line.lower().startswith("server:"):
+                    srv = line
+                    break
+            print(f"{ip:16s} {srv}")
+            if target:
+                print(text)
+                print("---")
 except socket.timeout:
-    print(f"No SSDP from {target}")
+    if not seen:
+        print(f"No SSDP responses{' from ' + target if target else ''}")
 s.close()

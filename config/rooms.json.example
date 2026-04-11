@@ -1,0 +1,5 @@
+{
+  "livingroom": { "ip": "192.168.1.100", "name": "Living Room Shield" },
+  "office": { "ip": "", "name": "Office Shield" },
+  "bedroom": { "ip": "", "name": "Bedroom Shield" }
+}

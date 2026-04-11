@@ -6,14 +6,25 @@ Also supports Panasonic DIAL on port 61118 for app launching.
 MAC: B4:6C:47:62:1B:BF (Wake-on-LAN supported)
 """
 
+import json
 import urllib.request
 import re
+from pathlib import Path
 
 SKILL_NAME = "panasonic_bd"
 SKILL_DESCRIPTION = "Panasonic UB9000 4K Blu-ray — play, pause, stop, status, volume"
 
-BD_IP = "192.168.0.209"
-BD_MAC = "B4:6C:47:62:1B:BF"
+CONFIG_FILE = Path(__file__).parent.parent / "config" / "panasonic_bd.json"
+
+def _load_config():
+    try:
+        return json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return {"ip": "", "mac": ""}
+
+_cfg = _load_config()
+BD_IP = _cfg.get("ip", "")
+BD_MAC = _cfg.get("mac", "")
 AVT_URL = f"http://{BD_IP}:60606/Server0/AVT_control"
 RCS_URL = f"http://{BD_IP}:60606/Server0/RCS_control"
 

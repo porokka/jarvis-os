@@ -1,0 +1,5 @@
+{
+  "nova": { "type": "bauer", "id": "fi_radionova", "label": "Radio Nova", "fallback": "https://rayo.fi/radio-nova" },
+  "lofi": { "type": "url", "url": "https://play.streamafrica.net/lofiradio", "label": "Lo-Fi Radio" },
+  "chillhop": { "type": "url", "url": "http://stream.zeno.fm/fyn8eh3h5f8uv", "label": "Chillhop" }
+}

@@ -23,7 +23,8 @@ PERSONALITY="$JARVIS_DIR/JARVIS.md"
 HISTORY="$BRIDGE/conversation.md"
 AUDIO_OUT="$JARVIS_DIR/tts/last_speech.wav"
 MPV_EXE="/mnt/c/Program Files/MPV Player/mpv.exe"
-FFMPEG_EXE="/mnt/c/Users/Sami Porokka/AppData/Local/Microsoft/WinGet/Packages/Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe/ffmpeg-8.1-full_build/bin/ffmpeg.exe"
+# FFmpeg path — adjust to your Windows install location
+FFMPEG_EXE=$(command -v ffmpeg.exe 2>/dev/null || find /mnt/c/Users/*/AppData/Local/Microsoft/WinGet/Packages/Gyan.FFmpeg*/ffmpeg-*/bin/ffmpeg.exe 2>/dev/null | head -1)
 
 OLLAMA_FAST="qwen3:30b-a3b"
 OLLAMA_CODE="qwen3-coder:30b"

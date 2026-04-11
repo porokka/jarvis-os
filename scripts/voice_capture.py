@@ -181,7 +181,7 @@ def transcribe(audio):
         sf.write(f.name, audio, SAMPLE_RATE)
         result = model.transcribe(
             f.name, language="en", fp16=False,
-            initial_prompt="Hey JARVIS, OK JARVIS, play radio, check my projects, what is the weather in Tallinn, Suomipop, Radio Nova, Inga, StockWatch, Poro-IT",
+            initial_prompt="Hey JARVIS, OK JARVIS, play radio, stop radio, check my projects, scan network, set timer",
         )
         os.unlink(f.name)
         return result["text"].strip()

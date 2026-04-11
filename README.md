@@ -252,4 +252,4 @@ jarvis-os/
 
 ## License
 
-Private project — Poro-IT OÜ
+MIT License — see [LICENSE](LICENSE) for details.

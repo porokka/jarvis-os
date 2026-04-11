@@ -1,0 +1,19 @@
+{
+  "name": "Denon AVR-X4100W",
+  "ip": "192.168.1.200",
+  "room": "livingroom",
+  "inputs": {
+    "Game": { "command": "SIGAME", "description": "PC / Gaming", "device": "pc", "aliases": ["pc", "computer"] },
+    "Media Player": { "command": "SIMPLAY", "description": "Streaming device", "device": "shield", "aliases": ["shield", "streaming"] },
+    "Phono": { "command": "SIPHONO", "description": "Turntable", "aliases": ["vinyl", "turntable"] },
+    "TV Audio": { "command": "SITV", "description": "TV ARC", "aliases": ["tv", "arc"] },
+    "Bluetooth": { "command": "SIBT", "description": "Bluetooth", "aliases": ["bluetooth", "bt"] }
+  },
+  "volume": { "commands": { "up": "MVUP", "down": "MVDOWN", "mute_on": "MUON", "mute_off": "MUOFF" } },
+  "power": { "on": "PWON", "off": "PWSTANDBY", "status": "PW?" },
+  "presets": {
+    "headphones": { "description": "Headset only", "commands": ["MUON", "Z2ON"] },
+    "speakers": { "description": "Speakers only", "commands": ["MUOFF", "Z2OFF"] }
+  },
+  "surround": { "auto": "MSAUTO", "stereo": "MSSTEREO", "movie": "MSMOVIE", "music": "MSMUSIC" }
+}

@@ -15,7 +15,17 @@ SKILL_DESCRIPTION = "LG webOS TV — power, volume, input, apps, media control"
 
 CONFIG_DIR = Path(__file__).parent.parent / "config"
 KEY_FILE = CONFIG_DIR / "lg_tv_key.json"
-TV_IP = "192.168.0.130"
+TV_CONFIG = CONFIG_DIR / "lg_tv.json"
+
+# Load IP from config, fallback to discovery
+def _get_tv_ip() -> str:
+    try:
+        data = json.loads(TV_CONFIG.read_text(encoding="utf-8"))
+        return data.get("ip", "")
+    except Exception:
+        return ""
+
+TV_IP = _get_tv_ip()
 
 
 def _load_key() -> str | None:

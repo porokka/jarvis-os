@@ -1,0 +1,17 @@
+{
+  "enabled": {
+    "denon": true,
+    "shield": true,
+    "radio": true,
+    "volume": true,
+    "timer": true,
+    "memory": true,
+    "vault": true,
+    "web": true,
+    "shell": true,
+    "claude_skills": true,
+    "lg_tv": false,
+    "network": true,
+    "panasonic_bd": false
+  }
+}
