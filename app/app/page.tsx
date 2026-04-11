@@ -212,7 +212,20 @@ export default function JarvisPage() {
   const [brain, setBrain] = useState("claude");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
-  const [centerTab, setCenterTab] = useState<"jarvis" | "network" | "logs">("jarvis");
+  const [activeTab, setActiveTab] = useState("jarvis");
+  const [openTabs, setOpenTabs] = useState<{ id: string; label: string }[]>([]);
+
+  const openTab = (id: string, label: string) => {
+    if (!openTabs.find(t => t.id === id)) {
+      setOpenTabs(prev => [...prev, { id, label }]);
+    }
+    setActiveTab(id);
+  };
+
+  const closeTab = (id: string) => {
+    setOpenTabs(prev => prev.filter(t => t.id !== id));
+    if (activeTab === id) setActiveTab("jarvis");
+  };
 
   const historyEndRef = useRef<HTMLDivElement>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
@@ -659,31 +672,54 @@ export default function JarvisPage() {
 
         {/* ──── CENTER ──── */}
         <div className="flex-1 relative flex flex-col min-w-0">
-          {/* Tab bar */}
-          <div className="flex items-center gap-1 px-4 pt-2 pb-1 z-10">
-            {([
-              { id: "jarvis", label: "JARVIS" },
-              { id: "network", label: "NETWORK" },
-              { id: "logs", label: "LOGS" },
-            ] as const).map(tab => (
+          {/* Dynamic tab bar — JARVIS is permanent, others open/close */}
+          {openTabs.length > 0 && (
+            <div className="flex items-center gap-1 px-4 pt-2 pb-1 z-10">
               <button
-                key={tab.id}
-                onClick={() => setCenterTab(tab.id)}
+                onClick={() => setActiveTab("jarvis")}
                 className={`
                   text-[8px] tracking-[3px] uppercase px-3 py-1.5 rounded-sm transition-all
-                  ${centerTab === tab.id
+                  ${activeTab === "jarvis"
                     ? "text-[var(--accent)] bg-[var(--accent)]/10 border border-[var(--accent)]/30"
                     : "text-white/20 hover:text-white/40 border border-transparent"
                   }
                 `}
               >
-                {tab.label}
+                JARVIS
               </button>
-            ))}
-          </div>
+              {openTabs.map(tab => (
+                <div key={tab.id} className="flex items-center">
+                  <button
+                    onClick={() => setActiveTab(tab.id)}
+                    className={`
+                      text-[8px] tracking-[3px] uppercase px-3 py-1.5 rounded-l-sm transition-all
+                      ${activeTab === tab.id
+                        ? "text-[var(--accent)] bg-[var(--accent)]/10 border border-[var(--accent)]/30 border-r-0"
+                        : "text-white/20 hover:text-white/40 border border-transparent"
+                      }
+                    `}
+                  >
+                    {tab.label}
+                  </button>
+                  <button
+                    onClick={() => closeTab(tab.id)}
+                    className={`
+                      text-[8px] px-1.5 py-1.5 rounded-r-sm transition-all
+                      ${activeTab === tab.id
+                        ? "text-white/30 hover:text-red-400 bg-[var(--accent)]/10 border border-[var(--accent)]/30 border-l-0"
+                        : "text-white/10 hover:text-red-400 border border-transparent"
+                      }
+                    `}
+                  >
+                    &times;
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
 
           {/* ── Tab: JARVIS (face + chat) ── */}
-          {centerTab === "jarvis" && (
+          {activeTab === "jarvis" && (
             <>
               <div
                 className="flex-1 relative cursor-pointer min-h-0"
@@ -747,15 +783,13 @@ export default function JarvisPage() {
             </>
           )}
 
-          {/* ── Tab: NETWORK ── */}
-          {centerTab === "network" && (
+          {/* ── Dynamic tab content ── */}
+          {activeTab === "network" && (
             <div className="flex-1 overflow-y-auto p-6">
               <NetworkMap />
             </div>
           )}
-
-          {/* ── Tab: LOGS ── */}
-          {centerTab === "logs" && (
+          {activeTab === "logs" && (
             <div className="flex-1 overflow-y-auto p-6">
               <SystemLog />
             </div>
@@ -765,6 +799,24 @@ export default function JarvisPage() {
         {/* ──── RIGHT PANEL ──── */}
         <aside className="w-[280px] flex-shrink-0 flex flex-col gap-3 p-3 overflow-y-auto scrollbar-hud z-10">
           <TimersWidget />
+
+          {/* Quick launch buttons */}
+          <div className="flex flex-wrap gap-1.5 px-1">
+            {[
+              { id: "network", label: "NETWORK" },
+              { id: "logs", label: "LOGS" },
+            ].map(item => (
+              <button
+                key={item.id}
+                onClick={() => openTab(item.id, item.label)}
+                className="text-[7px] tracking-[2px] uppercase px-2.5 py-1 rounded-sm
+                  bg-white/[0.02] border border-white/[0.06] text-white/25
+                  hover:text-[var(--accent)] hover:border-[var(--accent)]/30 transition-all"
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
 
           {/* Quick Status Cards */}
           <HudPanel title="SYSTEM STATUS">
