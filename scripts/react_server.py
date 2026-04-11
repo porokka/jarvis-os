@@ -18,7 +18,9 @@ Usage: python scripts/react_server.py [--port 7900]
 import json
 import os
 import random
+import subprocess
 import sys
+import threading
 from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
@@ -35,6 +37,23 @@ PORT = int(sys.argv[sys.argv.index("--port") + 1]) if "--port" in sys.argv else 
 MAX_ITERATIONS = 5
 
 VAULT_DIR = Path("/mnt/d/Jarvis_vault") if os.name != "nt" else Path("D:/Jarvis_vault")
+
+
+def speak_ack(text: str):
+    """Speak ACK via PowerShell TTS in background thread — non-blocking."""
+    def _speak():
+        try:
+            safe = text.replace("'", "''")
+            subprocess.run(
+                ['powershell.exe', '-Command',
+                 f"Add-Type -AssemblyName System.Speech; "
+                 f"$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
+                 f"$s.Rate = 2; $s.Speak('{safe}')"],
+                timeout=10, capture_output=True,
+            )
+        except Exception:
+            pass
+    threading.Thread(target=_speak, daemon=True).start()
 
 # -- Load all skills --
 
@@ -238,6 +257,7 @@ class ReactHandler(BaseHTTPRequestHandler):
                     ts = datetime.now().strftime("%H:%M:%S")
                     with open(str(VAULT_DIR / "jarvis.log"), "a") as f:
                         f.write(f"[{ts}] ACK: {ack}\n")
+                    speak_ack(ack)
                 except:
                     pass
 
