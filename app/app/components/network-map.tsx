@@ -98,7 +98,7 @@ function DeviceIcon({ type, x, y, size = 18 }: { type: string; x: number; y: num
 
 export function NetworkMap({ onScanComplete }: { onScanComplete?: () => void } = {}) {
   const [topology, setTopology] = useState<Topology>({ devices: [], gateway: "192.168.0.1", subnet: "" });
-  const [hoveredDevice, setHoveredDevice] = useState<Device | null>(null);
+  const [selectedDevice, setSelectedDevice] = useState<Device | null>(null);
   const [scanning, setScanning] = useState(false);
   const lastScanRef = useRef(0);
 
@@ -291,8 +291,7 @@ export function NetworkMap({ onScanComplete }: { onScanComplete?: () => void } =
                 <g
                   key={i}
                   className="nm-device"
-                  onMouseEnter={() => setHoveredDevice(l.device)}
-                  onMouseLeave={() => setHoveredDevice(null)}
+                  onClick={() => setSelectedDevice(l.device)}
                 >
                   <DeviceIcon type={l.device.type} x={l.x} y={l.y} size={22} />
                   {/* Label */}
@@ -321,15 +320,98 @@ export function NetworkMap({ onScanComplete }: { onScanComplete?: () => void } =
         </div>
       )}
 
-      {/* Hover tooltip */}
-      {hoveredDevice && (
-        <div className="nm-tooltip">
-          <div className="nm-tt-name">{hoveredDevice.hostname}</div>
-          <div className="nm-tt-detail">{hoveredDevice.ip} &middot; {hoveredDevice.mac}</div>
-          <div className="nm-tt-detail">{hoveredDevice.type}{hoveredDevice.vendor ? ` (${hoveredDevice.vendor})` : ""}</div>
-          {hoveredDevice.ports.length > 0 && (
-            <div className="nm-tt-detail">Ports: {hoveredDevice.ports.join(", ")}</div>
-          )}
+      {/* Device info modal */}
+      {selectedDevice && (
+        <div className="nm-modal-overlay" onClick={() => setSelectedDevice(null)}>
+          <div className="nm-modal" onClick={e => e.stopPropagation()}>
+            <div className="nm-modal-header">
+              <svg width="28" height="28" viewBox="0 0 28 28">
+                <DeviceIcon type={selectedDevice.type} x={14} y={14} size={24} />
+              </svg>
+              <div className="nm-modal-title">
+                <div className="nm-modal-name">{selectedDevice.hostname || selectedDevice.ip}</div>
+                <div className="nm-modal-type" style={{ color: TYPE_COLORS[selectedDevice.type] || "#888" }}>
+                  {selectedDevice.type.toUpperCase()}{selectedDevice.vendor ? ` \u2022 ${selectedDevice.vendor}` : ""}
+                </div>
+              </div>
+              <button className="nm-modal-close" onClick={() => setSelectedDevice(null)}>&times;</button>
+            </div>
+
+            <div className="nm-modal-body">
+              <div className="nm-modal-row">
+                <span className="nm-modal-label">IP ADDRESS</span>
+                <span className="nm-modal-value">{selectedDevice.ip}</span>
+              </div>
+              {selectedDevice.mac && (
+                <div className="nm-modal-row">
+                  <span className="nm-modal-label">MAC ADDRESS</span>
+                  <span className="nm-modal-value">{selectedDevice.mac}</span>
+                </div>
+              )}
+              {selectedDevice.hostname && selectedDevice.hostname !== selectedDevice.ip && (
+                <div className="nm-modal-row">
+                  <span className="nm-modal-label">HOSTNAME</span>
+                  <span className="nm-modal-value">{selectedDevice.hostname}</span>
+                </div>
+              )}
+
+              {selectedDevice.ports.length > 0 && (
+                <>
+                  <div className="nm-modal-section">OPEN PORTS</div>
+                  <div className="nm-modal-ports">
+                    {selectedDevice.ports.map(port => {
+                      const portLabels: Record<number, string> = {
+                        22: "SSH", 80: "HTTP", 443: "HTTPS", 554: "RTSP",
+                        631: "IPP", 1400: "Sonos", 3000: "Dev", 3689: "DAAP",
+                        5000: "DSM", 5001: "DSM-SSL", 5555: "ADB",
+                        8008: "Cast", 8080: "HTTP-Alt", 8200: "DLNA",
+                        8443: "HTTPS-Alt", 9100: "Print", 11434: "Ollama",
+                        32400: "Plex",
+                      };
+                      const label = portLabels[port] || `Port ${port}`;
+                      const isWeb = [80, 443, 8080, 8443, 5000, 5001, 3000, 8200, 32400].includes(port);
+                      const proto = [443, 8443, 5001].includes(port) ? "https" : "http";
+                      const url = `${proto}://${selectedDevice.ip}:${port}`;
+
+                      return (
+                        <div key={port} className="nm-port-item">
+                          <span className="nm-port-num">{port}</span>
+                          <span className="nm-port-label">{label}</span>
+                          {isWeb && (
+                            <a
+                              href={url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="nm-port-link"
+                            >
+                              OPEN &rarr;
+                            </a>
+                          )}
+                          {port === 5555 && (
+                            <button
+                              className="nm-port-link"
+                              onClick={() => {
+                                fetch("/api/input", {
+                                  method: "POST",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({ text: `connect adb to ${selectedDevice.ip}` }),
+                                });
+                              }}
+                            >
+                              ADB CONNECT
+                            </button>
+                          )}
+                          {port === 22 && (
+                            <span className="nm-port-hint">ssh {selectedDevice.ip}</span>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
         </div>
       )}
 
@@ -383,16 +465,72 @@ export function NetworkMap({ onScanComplete }: { onScanComplete?: () => void } =
         }
         .nm-device { cursor: pointer; }
         .nm-device:hover { filter: brightness(1.5); }
-        .nm-tooltip {
-          position: absolute; bottom: 30px; left: 12px; right: 12px;
-          background: rgba(0,0,0,0.85); border: 1px solid rgba(255,255,255,0.1);
-          border-radius: 4px; padding: 8px 10px;
+        .nm-modal-overlay {
+          position: fixed; inset: 0; z-index: 100;
+          background: rgba(0,0,0,0.7); backdrop-filter: blur(4px);
+          display: flex; align-items: center; justify-content: center;
         }
-        .nm-tt-name {
-          font-size: 10px; color: var(--accent); margin-bottom: 2px;
+        .nm-modal {
+          background: #0a0e14; border: 1px solid rgba(255,255,255,0.1);
+          border-radius: 6px; width: 380px; max-height: 80vh; overflow-y: auto;
+          box-shadow: 0 0 40px rgba(0,200,255,0.1);
         }
-        .nm-tt-detail {
-          font-size: 8px; color: rgba(255,255,255,0.4); line-height: 1.4;
+        .nm-modal-header {
+          display: flex; align-items: center; gap: 10px;
+          padding: 16px 16px 12px; border-bottom: 1px solid rgba(255,255,255,0.06);
+        }
+        .nm-modal-title { flex: 1; }
+        .nm-modal-name {
+          font-size: 13px; color: #fff; font-weight: 500;
+        }
+        .nm-modal-type {
+          font-size: 8px; letter-spacing: 2px; text-transform: uppercase; opacity: 0.7; margin-top: 2px;
+        }
+        .nm-modal-close {
+          font-size: 18px; color: rgba(255,255,255,0.2); background: none; border: none;
+          cursor: pointer; padding: 0 4px; line-height: 1;
+        }
+        .nm-modal-close:hover { color: #f04040; }
+        .nm-modal-body { padding: 12px 16px 16px; }
+        .nm-modal-row {
+          display: flex; justify-content: space-between; align-items: center;
+          padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.03);
+        }
+        .nm-modal-label {
+          font-size: 8px; letter-spacing: 2px; color: rgba(255,255,255,0.3);
+          text-transform: uppercase;
+        }
+        .nm-modal-value {
+          font-size: 11px; color: rgba(255,255,255,0.7); font-family: 'SF Mono', monospace;
+        }
+        .nm-modal-section {
+          font-size: 8px; letter-spacing: 2px; color: var(--accent); opacity: 0.5;
+          text-transform: uppercase; margin-top: 14px; margin-bottom: 8px;
+        }
+        .nm-modal-ports { display: flex; flex-direction: column; gap: 4px; }
+        .nm-port-item {
+          display: flex; align-items: center; gap: 8px;
+          padding: 5px 8px; background: rgba(255,255,255,0.02);
+          border-radius: 3px; border: 1px solid rgba(255,255,255,0.04);
+        }
+        .nm-port-num {
+          font-size: 11px; color: var(--accent); font-family: 'SF Mono', monospace;
+          min-width: 40px;
+        }
+        .nm-port-label {
+          font-size: 9px; color: rgba(255,255,255,0.5); flex: 1;
+        }
+        .nm-port-link {
+          font-size: 7px; letter-spacing: 2px; text-transform: uppercase;
+          color: #40f080; text-decoration: none; padding: 2px 6px;
+          border: 1px solid #40f08040; border-radius: 2px;
+          background: none; cursor: pointer; transition: all 0.2s;
+        }
+        .nm-port-link:hover {
+          background: rgba(64,240,128,0.1); border-color: #40f080;
+        }
+        .nm-port-hint {
+          font-size: 8px; color: rgba(255,255,255,0.2); font-family: 'SF Mono', monospace;
         }
         .nm-legend {
           padding: 0 12px 8px; display: flex; justify-content: flex-end;
