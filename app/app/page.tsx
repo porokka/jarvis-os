@@ -212,6 +212,7 @@ export default function JarvisPage() {
   const [brain, setBrain] = useState("claude");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
+  const [centerTab, setCenterTab] = useState<"jarvis" | "network" | "logs">("jarvis");
 
   const historyEndRef = useRef<HTMLDivElement>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
@@ -656,92 +657,114 @@ export default function JarvisPage() {
           </HudPanel>
         </aside>
 
-        {/* ──── CENTER: 3D Face ──── */}
+        {/* ──── CENTER ──── */}
         <div className="flex-1 relative flex flex-col min-w-0">
-          {/* Face area */}
-          <div
-            className="flex-1 relative cursor-pointer min-h-0"
-            onClick={handleVoiceToggle}
-          >
-            {/* Arc reactor decoration */}
-            <ArcReactorRing />
-
-            {/* 3D Face */}
-            <JarvisScene
-              emotion={emotion}
-              speaking={state === "speaking"}
-              thinking={state === "thinking"}
-            />
-
-            {/* Listening overlay */}
-            {state === "listening" && (
-              <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-10">
-                <div className="text-red-400 text-[10px] tracking-[4px] uppercase state-listening flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-red-400 animate-ping" />
-                  LISTENING &mdash; CLICK TO STOP
-                </div>
-              </div>
-            )}
+          {/* Tab bar */}
+          <div className="flex items-center gap-1 px-4 pt-2 pb-1 z-10">
+            {([
+              { id: "jarvis", label: "JARVIS" },
+              { id: "network", label: "NETWORK" },
+              { id: "logs", label: "LOGS" },
+            ] as const).map(tab => (
+              <button
+                key={tab.id}
+                onClick={() => setCenterTab(tab.id)}
+                className={`
+                  text-[8px] tracking-[3px] uppercase px-3 py-1.5 rounded-sm transition-all
+                  ${centerTab === tab.id
+                    ? "text-[var(--accent)] bg-[var(--accent)]/10 border border-[var(--accent)]/30"
+                    : "text-white/20 hover:text-white/40 border border-transparent"
+                  }
+                `}
+              >
+                {tab.label}
+              </button>
+            ))}
           </div>
 
-          {/* ──── BOTTOM: Output + Chat + Input ──── */}
-          <div className="flex-shrink-0 px-6 pb-4 pt-2 z-10 relative">
-            <HudLine className="mb-3" />
-
-            {/* Current response */}
-            <div className="text-center mb-3">
-              <p className="text-sm leading-relaxed opacity-75 max-w-xl mx-auto data-flicker">
-                {output}
-              </p>
-            </div>
-
-            {/* Chat history toggle */}
-            {history.length > 0 && (
-              <div className="mb-3">
-                <button
-                  onClick={() => setChatOpen((o) => !o)}
-                  className="text-[8px] tracking-[2px] uppercase text-[var(--accent)] opacity-30 hover:opacity-60 transition-opacity cursor-pointer mx-auto block mb-2"
-                >
-                  {chatOpen ? "HIDE HISTORY" : `SHOW HISTORY (${history.length})`}
-                </button>
-                {chatOpen && (
-                  <div className="max-w-xl mx-auto">
-                    <HudPanel className="mb-2">
-                      <div className="p-2">
-                        <ChatHistory history={history} />
-                        <div ref={historyEndRef} />
-                      </div>
-                    </HudPanel>
+          {/* ── Tab: JARVIS (face + chat) ── */}
+          {centerTab === "jarvis" && (
+            <>
+              <div
+                className="flex-1 relative cursor-pointer min-h-0"
+                onClick={handleVoiceToggle}
+              >
+                <ArcReactorRing />
+                <JarvisScene
+                  emotion={emotion}
+                  speaking={state === "speaking"}
+                  thinking={state === "thinking"}
+                />
+                {state === "listening" && (
+                  <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-10">
+                    <div className="text-red-400 text-[10px] tracking-[4px] uppercase state-listening flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-red-400 animate-ping" />
+                      LISTENING &mdash; CLICK TO STOP
+                    </div>
                   </div>
                 )}
               </div>
-            )}
 
-            {/* Hint */}
-            <p className="text-[8px] text-white/15 tracking-[2px] text-center mb-2 uppercase">
-              {micActive ? 'Listening\u2026 say "Hey JARVIS"' : "Click face to start voice"} &middot; Type below for text
-            </p>
+              <div className="flex-shrink-0 px-6 pb-4 pt-2 z-10 relative">
+                <HudLine className="mb-3" />
+                <div className="text-center mb-3">
+                  <p className="text-sm leading-relaxed opacity-75 max-w-xl mx-auto data-flicker">
+                    {output}
+                  </p>
+                </div>
+                {history.length > 0 && (
+                  <div className="mb-3">
+                    <button
+                      onClick={() => setChatOpen((o) => !o)}
+                      className="text-[8px] tracking-[2px] uppercase text-[var(--accent)] opacity-30 hover:opacity-60 transition-opacity cursor-pointer mx-auto block mb-2"
+                    >
+                      {chatOpen ? "HIDE HISTORY" : `SHOW HISTORY (${history.length})`}
+                    </button>
+                    {chatOpen && (
+                      <div className="max-w-xl mx-auto">
+                        <HudPanel className="mb-2">
+                          <div className="p-2">
+                            <ChatHistory history={history} />
+                            <div ref={historyEndRef} />
+                          </div>
+                        </HudPanel>
+                      </div>
+                    )}
+                  </div>
+                )}
+                <p className="text-[8px] text-white/15 tracking-[2px] text-center mb-2 uppercase">
+                  {micActive ? 'Listening\u2026 say "Hey JARVIS"' : "Click face to start voice"} &middot; Type below for text
+                </p>
+                <div className="max-w-xl mx-auto">
+                  <InputBar
+                    onSend={handleSend}
+                    disabled={isProcessing}
+                    listening={state === "listening"}
+                    onVoiceToggle={handleVoiceToggle}
+                  />
+                </div>
+              </div>
+            </>
+          )}
 
-            {/* Input bar */}
-            <div className="max-w-xl mx-auto">
-              <InputBar
-                onSend={handleSend}
-                disabled={isProcessing}
-                listening={state === "listening"}
-                onVoiceToggle={handleVoiceToggle}
-              />
+          {/* ── Tab: NETWORK ── */}
+          {centerTab === "network" && (
+            <div className="flex-1 overflow-y-auto p-6">
+              <NetworkMap />
             </div>
-          </div>
+          )}
+
+          {/* ── Tab: LOGS ── */}
+          {centerTab === "logs" && (
+            <div className="flex-1 overflow-y-auto p-6">
+              <SystemLog />
+            </div>
+          )}
         </div>
 
         {/* ──── RIGHT PANEL ──── */}
         <aside className="w-[280px] flex-shrink-0 flex flex-col gap-3 p-3 overflow-y-auto scrollbar-hud z-10">
           <TimersWidget />
-          <SystemLog />
-
-          <HudPanel title="NETWORK">
-            <NetworkMap />
-          </HudPanel>
 
           {/* Quick Status Cards */}
           <HudPanel title="SYSTEM STATUS">
