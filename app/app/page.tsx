@@ -605,6 +605,10 @@ export default function JarvisPage() {
 
         {/* ──── LEFT PANEL ──── */}
         <aside className="w-[260px] flex-shrink-0 flex flex-col gap-3 p-3 overflow-y-auto scrollbar-hud z-10">
+          <HudPanel title="RADIO">
+            <RadioPlayer />
+          </HudPanel>
+
           <GpuMonitor />
 
           {/* Emotion indicator */}
@@ -650,7 +654,6 @@ export default function JarvisPage() {
                 </span>
               </div>
             </div>
-            <RadioPlayer />
           </HudPanel>
         </aside>
 

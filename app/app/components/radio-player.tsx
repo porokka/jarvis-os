@@ -135,8 +135,7 @@ export function RadioPlayer() {
 
       <div className="radio-header" onClick={() => setExpanded(!expanded)}>
         <span className={`radio-dot ${audioPlaying ? "active" : ""}`} />
-        <span className="radio-title">RADIO</span>
-        <span className="radio-expand">{expanded ? "\u25B4" : "\u25BE"}</span>
+        <span className="radio-expand">{expanded ? "HIDE STATIONS \u25B4" : "STATIONS \u25BE"}</span>
       </div>
 
       {audioPlaying && currentLabel ? (
