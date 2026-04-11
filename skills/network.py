@@ -120,35 +120,69 @@ def _identify_device(ip: str, mac: str, hostname: str, ports: list) -> dict:
     device_type = "unknown"
     vendor = ""
 
-    # Check MAC OUI
+    # Check MAC OUI first
     if mac_prefix in OUI_MAP:
         device_type, vendor = OUI_MAP[mac_prefix]
 
-    # Infer from open ports
+    # Infer from hostname (most reliable — runs before port check) — most reliable when MAC is unavailable
+    hn = hostname.lower() if hostname else ""
+
+    # Infrastructure devices (switches, APs, routers)
+    if any(x in hn for x in ["usw-", "us-8", "us-16", "us-24", "us-48", "usw "]):
+        device_type, vendor = "switch", "Ubiquiti"
+    elif any(x in hn for x in ["uap-", "u6-", "unifi-ap", "uap ", "nanohd", "flexhd", "lite-8-poe"]):
+        device_type, vendor = "ap", "Ubiquiti"
+    elif any(x in hn for x in ["usw-lite", "usw-flex"]):
+        device_type, vendor = "switch", "Ubiquiti"
+    elif "unifi" in hn and device_type == "unknown":
+        device_type, vendor = "router", "Ubiquiti"
+    # Media/entertainment
+    elif "shield" in hn:
+        device_type = "shield"
+    elif any(x in hn for x in ["lgwebos", "lgtv", "lg-tv"]):
+        device_type, vendor = "tv", "LG"
+    elif any(x in hn for x in ["samsung-tv", "tizen"]):
+        device_type, vendor = "tv", "Samsung"
+    elif any(x in hn for x in ["chromecast", "google-home", "nest"]):
+        device_type, vendor = "cast", "Google"
+    elif "sonos" in hn or "speaker" in hn:
+        device_type = "speaker"
+    elif "denon" in hn or "marantz" in hn:
+        device_type, vendor = "receiver", "Denon"
+    # Computers
+    elif any(x in hn for x in ["macbook", "macpro", "imac"]):
+        device_type, vendor = "laptop" if "book" in hn else "desktop", "Apple"
+    elif any(x in hn for x in ["iphone", "ipad"]):
+        device_type, vendor = "phone", "Apple"
+    elif any(x in hn for x in ["android", "galaxy", "s20", "s21", "s22", "s23", "s24", "pixel"]):
+        device_type = "phone"
+    elif any(x in hn for x in ["desktop", "pc", "workstation"]):
+        device_type = "desktop"
+    elif any(x in hn for x in ["laptop"]):
+        device_type = "laptop"
+    # IoT
+    elif any(x in hn for x in ["amazon-", "echo", "alexa", "fire"]):
+        device_type, vendor = "iot", "Amazon"
+    elif any(x in hn for x in ["dreame", "vacuum", "roborock", "roomba"]):
+        device_type = "iot"
+    elif any(x in hn for x in ["hue", "tradfri", "ikea"]):
+        device_type = "iot"
+    # Printers
+    elif any(x in hn for x in ["printer", "epson", "hp-", "canon", "lulzbot", "lutzl"]):
+        device_type = "printer"
+    # NAS
+    elif any(x in hn for x in ["synology", "diskstation", "nas"]):
+        device_type, vendor = "nas", "Synology"
+
+    # Fallback: port-based (only if still unknown)
     if device_type == "unknown":
         for port in ports:
             if port in PORT_TYPE_MAP:
                 device_type = PORT_TYPE_MAP[port]
                 break
 
-    # Infer from hostname
-    hn = hostname.lower()
-    if device_type == "unknown":
-        if "shield" in hn:
-            device_type = "shield"
-        elif any(x in hn for x in ["iphone", "ipad", "android", "galaxy"]):
-            device_type = "phone"
-        elif any(x in hn for x in ["macbook", "laptop"]):
-            device_type = "laptop"
-        elif any(x in hn for x in ["desktop", "pc", "workstation"]):
-            device_type = "desktop"
-        elif any(x in hn for x in ["printer", "epson", "hp-", "canon"]):
-            device_type = "printer"
-        elif any(x in hn for x in ["sonos", "speaker"]):
-            device_type = "speaker"
-
     # Gateway is the router
-    if ip.endswith(".1"):
+    if ip.endswith(".1") and device_type == "unknown":
         device_type = "router"
 
     # Try DNS reverse lookup if no hostname
@@ -169,11 +203,17 @@ def _identify_device(ip: str, mac: str, hostname: str, ports: list) -> dict:
 def exec_scan_network() -> str:
     """Full network scan — discover devices, identify types, save topology."""
     try:
-        # nmap scan: OS detection would need root, so use port + MAC scan
+        # Try with sudo for MAC addresses, fall back to unprivileged scan
+        nmap_cmd = ["nmap", "-sn", "-oX", "-", "192.168.0.0/24"]
         result = subprocess.run(
-            ["nmap", "-sn", "-oX", "-", "192.168.0.0/24"],
+            ["sudo", "-n"] + nmap_cmd,
             capture_output=True, text=True, timeout=120,
         )
+        if result.returncode != 0:
+            result = subprocess.run(
+                nmap_cmd,
+                capture_output=True, text=True, timeout=120,
+            )
 
         devices = []
         # Parse nmap XML output
@@ -214,12 +254,33 @@ def exec_scan_network() -> str:
             if m and "hostname" in line:
                 current_hostname = m.group(1)
 
+        # ARP table lookup for MAC addresses (works without root)
+        arp_macs = {}
+        try:
+            arp_result = subprocess.run(["arp", "-a"], capture_output=True, text=True, timeout=10)
+            for line in arp_result.stdout.split("\n"):
+                m = re.search(r'(\d+\.\d+\.\d+\.\d+)\s+.*?([\da-fA-F]{2}[:-][\da-fA-F]{2}[:-][\da-fA-F]{2}[:-][\da-fA-F]{2}[:-][\da-fA-F]{2}[:-][\da-fA-F]{2})', line)
+                if m:
+                    arp_macs[m.group(1)] = m.group(2).upper().replace("-", ":")
+        except Exception:
+            pass
+
         # Don't forget last device
         if current_ip:
             dev = _identify_device(current_ip, current_mac, current_hostname, [])
             if current_vendor and not dev["vendor"]:
                 dev["vendor"] = current_vendor
             devices.append(dev)
+
+        # Fill in MACs from ARP table
+        for d in devices:
+            if not d["mac"] and d["ip"] in arp_macs:
+                d["mac"] = arp_macs[d["ip"]]
+                # Re-identify with MAC info
+                mac_prefix = d["mac"][:8].lower()
+                if mac_prefix in OUI_MAP and d["type"] == "unknown":
+                    d["type"], d["vendor"] = OUI_MAP[mac_prefix]
+                    d["icon"] = DEVICE_ICONS.get(d["type"], "?")
 
         # Port scan on discovered devices for better identification
         ips = [d["ip"] for d in devices if not d["ip"].endswith(".1")][:20]  # limit
