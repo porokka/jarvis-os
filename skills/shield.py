@@ -182,31 +182,6 @@ def exec_room_command(room: str, action: str) -> str:
     return f"{action.capitalize()} on {rooms[room]['name']}"
 
 
-def exec_scan_network() -> str:
-    """Scan LAN for NVIDIA Shields and Cast devices."""
-    try:
-        result = subprocess.run(
-            ["nmap", "-p", "5555,8008,8443", "--open", "-oG", "-", "192.168.0.0/24"],
-            capture_output=True, text=True, timeout=60,
-        )
-        devices = []
-        for line in result.stdout.split("\n"):
-            if "/open" in line:
-                parts = line.split()
-                ip = parts[1] if len(parts) > 1 else "?"
-                ports = [p for p in line.split() if "/open" in p]
-                devices.append(f"{ip} — ports: {', '.join(ports)}")
-
-        if not devices:
-            return "No Shields found with ADB enabled. Enable: Settings > Developer Options > Network debugging"
-
-        report = "Devices with open ADB/Cast ports:\n" + "\n".join(f"  {d}" for d in devices)
-        report += "\n\nTo assign to rooms, tell me which IP is which room."
-        return report
-    except Exception as e:
-        return f"Scan error: {e}"
-
-
 # -- Tool definitions --
 
 TOOLS = [
@@ -231,22 +206,10 @@ TOOLS = [
             },
         },
     },
-    {
-        "type": "function",
-        "function": {
-            "name": "scan_network",
-            "description": "Scan the local network for NVIDIA Shields, smart TVs, and Cast devices.",
-            "parameters": {
-                "type": "object",
-                "properties": {},
-            },
-        },
-    },
 ]
 
 TOOL_MAP = {
     "room_command": exec_room_command,
-    "scan_network": exec_scan_network,
 }
 
 KEYWORDS = {
@@ -256,5 +219,4 @@ KEYWORDS = {
         "prime", "youtube", "twitch", "apple tv", "activate",
         "headphones", "speakers", "denon", "vinyl", "phono",
     ],
-    "scan_network": ["scan", "network", "devices", "find shield", "what devices", "discover"],
 }

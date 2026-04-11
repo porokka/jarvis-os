@@ -309,6 +309,14 @@ class ReactHandler(BaseHTTPRequestHandler):
                 self._json_response({"playing": False, "stations": {}})
             return
 
+        if path == "/api/network":
+            try:
+                from skills.network import get_topology
+                self._json_response(get_topology())
+            except ImportError:
+                self._json_response({"devices": [], "gateway": "192.168.0.1"})
+            return
+
         if path == "/api/skills":
             self._json_response({"skills": get_loaded_skills()})
             return

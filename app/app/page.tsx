@@ -11,6 +11,7 @@ import { SystemLog } from "./components/system-log";
 import { TimersWidget } from "./components/timers-widget";
 import { SettingsPanel } from "./components/settings-panel";
 import { RadioPlayer } from "./components/radio-player";
+import { NetworkMap } from "./components/network-map";
 
 type JarvisState = "standby" | "listening" | "thinking" | "speaking" | "asking";
 
@@ -737,6 +738,10 @@ export default function JarvisPage() {
         <aside className="w-[280px] flex-shrink-0 flex flex-col gap-3 p-3 overflow-y-auto scrollbar-hud z-10">
           <TimersWidget />
           <SystemLog />
+
+          <HudPanel title="NETWORK">
+            <NetworkMap />
+          </HudPanel>
 
           {/* Quick Status Cards */}
           <HudPanel title="SYSTEM STATUS">
