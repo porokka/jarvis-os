@@ -167,13 +167,13 @@ export function NetworkMap({ onScanComplete }: { onScanComplete?: () => void } =
     const positioned: { device: Device; x: number; y: number; tier: number }[] = [];
     const conns: { from: number; to: number }[] = [];
 
-    const cellW = 95;
-    const tierGap = 75;
+    const cellW = 120;
+    const tierGap = 90;
 
     // Tier 0: Router
-    const routerY = 35;
-    const allCount = Math.max(infra.length, endpoints.length, 3);
-    const totalW = Math.max(allCount * cellW + 60, 500);
+    const routerY = 40;
+    const maxPerRow = Math.min(8, Math.max(4, Math.ceil(Math.sqrt(endpoints.length + 1))));
+    const totalW = Math.max(maxPerRow * cellW + 80, 700);
     const centerX = totalW / 2;
 
     if (router) {
@@ -194,8 +194,8 @@ export function NetworkMap({ onScanComplete }: { onScanComplete?: () => void } =
 
     // Tier 2: End devices — distribute under infra or directly under router
     const endY = (infra.length > 0 ? infraY : routerY) + tierGap;
-    const cols = Math.min(7, Math.max(3, Math.ceil(Math.sqrt(endpoints.length + 1))));
-    const startX = centerX - ((Math.min(cols, endpoints.length) - 1) * cellW) / 2;
+    const cols = maxPerRow;
+    const endStartX = centerX - ((Math.min(cols, endpoints.length) - 1) * cellW) / 2;
 
     for (let i = 0; i < endpoints.length; i++) {
       const col = i % cols;
@@ -203,8 +203,8 @@ export function NetworkMap({ onScanComplete }: { onScanComplete?: () => void } =
       const idx = positioned.length;
       positioned.push({
         device: endpoints[i],
-        x: startX + col * cellW,
-        y: endY + row * 55,
+        x: endStartX + col * cellW,
+        y: endY + row * 65,
         tier: 2,
       });
 
@@ -294,23 +294,23 @@ export function NetworkMap({ onScanComplete }: { onScanComplete?: () => void } =
                   onMouseEnter={() => setHoveredDevice(l.device)}
                   onMouseLeave={() => setHoveredDevice(null)}
                 >
-                  <DeviceIcon type={l.device.type} x={l.x} y={l.y} />
+                  <DeviceIcon type={l.device.type} x={l.x} y={l.y} size={22} />
                   {/* Label */}
                   <text
-                    x={l.x} y={l.y + 16}
+                    x={l.x} y={l.y + 18}
                     textAnchor="middle"
                     fill={color}
-                    fontSize="7"
-                    opacity="0.8"
+                    fontSize="8"
+                    opacity="0.85"
                     fontWeight="500"
                   >
                     {displayName(l.device)}
                   </text>
                   <text
-                    x={l.x} y={l.y + 24}
+                    x={l.x} y={l.y + 28}
                     textAnchor="middle"
-                    fill="rgba(255,255,255,0.3)"
-                    fontSize="5.5"
+                    fill="rgba(255,255,255,0.35)"
+                    fontSize="6.5"
                   >
                     {l.device.ip}
                   </text>
@@ -371,11 +371,15 @@ export function NetworkMap({ onScanComplete }: { onScanComplete?: () => void } =
         }
         .nm-svg-wrap {
           padding: 0 8px 8px;
-          overflow: hidden;
+          overflow: auto;
+          display: flex;
+          justify-content: center;
         }
         .nm-svg {
           width: 100%;
+          max-width: 900px;
           height: auto;
+          min-height: 400px;
         }
         .nm-device { cursor: pointer; }
         .nm-device:hover { filter: brightness(1.5); }
