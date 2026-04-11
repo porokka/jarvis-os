@@ -132,67 +132,49 @@ export function RadioPlayer() {
 
   const currentLabel = currentStation ? STATIONS[currentStation]?.label : null;
 
+  // Hidden audio element always renders (for voice-triggered playback)
+  if (!audioPlaying && !currentStation) {
+    return <audio ref={audioRef} crossOrigin="anonymous" />;
+  }
+
   return (
-    <div className="radio-player">
+    <div className="radio-player hud-panel rounded-sm glow-border">
       <audio ref={audioRef} crossOrigin="anonymous" />
 
-      <div className="radio-header" onClick={() => setExpanded(!expanded)}>
-        <span className={`radio-dot ${audioPlaying ? "active" : ""}`} />
-        <span className="radio-expand">{expanded ? "HIDE STATIONS \u25B4" : "STATIONS \u25BE"}</span>
+      <div className="radio-panel-header">
+        <span className="radio-dot active" />
+        <span className="radio-panel-title">RADIO</span>
       </div>
 
-      {audioPlaying && currentLabel ? (
-        <div className="radio-now-playing-wrap">
-          <div className="radio-now-playing">
-            <div className="radio-eq">
-              <span className="eq-bar" />
-              <span className="eq-bar" />
-              <span className="eq-bar" />
-            </div>
-            <span className="radio-station-name">{currentLabel}</span>
-            <button className="radio-stop" onClick={handleStop} title="Stop">&#9632;</button>
+      <div className="radio-now-playing-wrap">
+        <div className="radio-now-playing">
+          <div className="radio-eq">
+            <span className="eq-bar" />
+            <span className="eq-bar" />
+            <span className="eq-bar" />
           </div>
-          {(nowPlaying.title || nowPlaying.artist) && (
-            <div className="radio-track">
-              {nowPlaying.artist && <span className="radio-artist">{nowPlaying.artist}</span>}
-              {nowPlaying.artist && nowPlaying.title && <span className="radio-sep"> — </span>}
-              {nowPlaying.title && <span className="radio-title-text">{nowPlaying.title}</span>}
-            </div>
-          )}
+          <span className="radio-station-name">{currentLabel}</span>
+          <button className="radio-stop" onClick={handleStop} title="Stop">&#9632;</button>
         </div>
-      ) : (
-        <div className="radio-offline">
-          <span className="text-[9px] tracking-[1px] opacity-30">
-            {expanded ? "SELECT STATION" : "NO STATION"}
-          </span>
-        </div>
-      )}
-
-      {expanded && (
-        <div className="radio-stations">
-          {Object.entries(STATIONS).map(([key, info]) => (
-            <button
-              key={key}
-              className={`radio-station-btn ${currentStation === key ? "active" : ""}`}
-              onClick={() => handleStationClick(key)}
-            >
-              {info.label}
-            </button>
-          ))}
-        </div>
-      )}
+        {(nowPlaying.title || nowPlaying.artist) && (
+          <div className="radio-track">
+            {nowPlaying.artist && <span className="radio-artist">{nowPlaying.artist}</span>}
+            {nowPlaying.artist && nowPlaying.title && <span className="radio-sep"> — </span>}
+            {nowPlaying.title && <span className="radio-title-text">{nowPlaying.title}</span>}
+          </div>
+        )}
+      </div>
 
       <style jsx>{`
         .radio-player { padding: 0; }
-        .radio-header {
+        .radio-panel-header {
           display: flex; align-items: center; gap: 6px;
-          padding: 8px 12px 4px; cursor: pointer; user-select: none;
+          padding: 10px 12px 2px;
         }
-        .radio-title {
-          font-size: 8px; letter-spacing: 3px; text-transform: uppercase;
-          color: var(--accent); opacity: 0.4; flex: 1;
+        .radio-panel-title {
+          font-size: 9px; letter-spacing: 3px; text-transform: uppercase;
+          color: var(--accent); opacity: 0.5; font-weight: 600;
         }
-        .radio-expand { font-size: 8px; opacity: 0.3; color: var(--accent); }
         .radio-dot {
           width: 4px; height: 4px; border-radius: 50%;
           background: rgba(255,255,255,0.15); transition: all 0.3s;
