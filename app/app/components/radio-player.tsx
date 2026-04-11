@@ -95,9 +95,21 @@ export function RadioPlayer() {
       });
       hlsRef.current = hls;
     } else {
+      console.log("[RADIO] Playing direct:", url.substring(0, 80));
       audio.src = url;
       audio.load();
-      audio.play().then(() => setAudioPlaying(true)).catch(() => {});
+      audio.play().then(() => {
+        console.log("[RADIO] Playing OK");
+        setAudioPlaying(true);
+      }).catch((e) => {
+        console.error("[RADIO] Play failed:", e);
+        // Autoplay blocked — retry on next user interaction
+        const resume = () => {
+          audio.play().then(() => setAudioPlaying(true)).catch(() => {});
+          document.removeEventListener("click", resume);
+        };
+        document.addEventListener("click", resume, { once: true });
+      });
     }
   }, []);
 
@@ -136,12 +148,12 @@ export function RadioPlayer() {
 
   // Hidden audio element always renders (for voice-triggered playback)
   if (!audioPlaying && !currentStation) {
-    return <audio ref={audioRef} crossOrigin="anonymous" />;
+    return <audio ref={audioRef} />;
   }
 
   return (
     <div className="radio-player hud-panel rounded-sm glow-border">
-      <audio ref={audioRef} crossOrigin="anonymous" />
+      <audio ref={audioRef} />
 
       <div className="radio-panel-header">
         <span className="radio-dot active" />
