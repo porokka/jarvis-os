@@ -154,8 +154,9 @@ export function NetworkMap({ onScanComplete }: { onScanComplete?: () => void } =
   };
 
   // Layout: 3-tier hierarchy — router → infrastructure → end devices
-  const INFRA_TYPES = new Set(["switch", "ap", "router"]);
+  const INFRA_TYPES = new Set(["switch", "ap"]);
 
+  // Tree layout: each infra node is a branch, children hang below it
   const { layout, connections } = useMemo(() => {
     const devices = topology.devices || [];
     if (devices.length === 0) return { layout: [], connections: [] };
@@ -167,63 +168,92 @@ export function NetworkMap({ onScanComplete }: { onScanComplete?: () => void } =
     const positioned: { device: Device; x: number; y: number; tier: number }[] = [];
     const conns: { from: number; to: number }[] = [];
 
-    const cellW = 120;
-    const tierGap = 90;
-
-    // Tier 0: Router
-    const routerY = 40;
-    const maxPerRow = Math.min(8, Math.max(4, Math.ceil(Math.sqrt(endpoints.length + 1))));
-    const totalW = Math.max(maxPerRow * cellW + 80, 700);
-    const centerX = totalW / 2;
-
-    if (router) {
-      positioned.push({ device: router, x: centerX, y: routerY, tier: 0 });
-    }
-
-    // Tier 1: Infrastructure (switches, APs)
-    const infraY = routerY + tierGap;
+    // Distribute endpoints evenly across branches
+    // Each branch = 1 infra device (or router if no infra)
+    const branches: Device[][] = [];
     if (infra.length > 0) {
-      const startX = centerX - ((infra.length - 1) * cellW) / 2;
-      for (let i = 0; i < infra.length; i++) {
-        const idx = positioned.length;
-        positioned.push({ device: infra[i], x: startX + i * cellW, y: infraY, tier: 1 });
-        // Connect to router
-        if (router) conns.push({ from: 0, to: idx });
+      for (let i = 0; i < infra.length; i++) branches.push([]);
+      for (let i = 0; i < endpoints.length; i++) {
+        branches[i % infra.length].push(endpoints[i]);
       }
+    } else {
+      branches.push([...endpoints]);
     }
 
-    // Tier 2: End devices — distribute under infra or directly under router
-    const endY = (infra.length > 0 ? infraY : routerY) + tierGap;
-    const cols = maxPerRow;
-    const endStartX = centerX - ((Math.min(cols, endpoints.length) - 1) * cellW) / 2;
+    // Calculate widths for each branch
+    const leafW = 110;
+    const leafH = 60;
+    const branchGap = 40;
+    const branchWidths = branches.map(b => Math.max(1, b.length) * leafW);
+    const totalW = branchWidths.reduce((a, b) => a + b, 0) + (branches.length - 1) * branchGap;
+    const svgW = Math.max(totalW + 80, 600);
 
-    for (let i = 0; i < endpoints.length; i++) {
-      const col = i % cols;
-      const row = Math.floor(i / cols);
-      const idx = positioned.length;
-      positioned.push({
-        device: endpoints[i],
-        x: endStartX + col * cellW,
-        y: endY + row * 65,
-        tier: 2,
-      });
+    // Tier 0: Router at top center
+    const routerIdx = 0;
+    if (router) {
+      positioned.push({ device: router, x: svgW / 2, y: 40, tier: 0 });
+    }
 
-      // Connect to nearest infra device, or router if no infra
+    // Tier 1 + 2: Branches
+    let branchX = (svgW - totalW) / 2;
+
+    for (let bi = 0; bi < branches.length; bi++) {
+      const children = branches[bi];
+      const bw = branchWidths[bi];
+      const branchCenterX = branchX + bw / 2;
+
+      // Place infra node
       if (infra.length > 0) {
-        // Assign to infra device by distributing evenly
-        const infraIdx = (i % infra.length) + (router ? 1 : 0);
-        conns.push({ from: infraIdx, to: idx });
-      } else if (router) {
-        conns.push({ from: 0, to: idx });
+        const infraIdx = positioned.length;
+        positioned.push({
+          device: infra[bi],
+          x: branchCenterX,
+          y: 140,
+          tier: 1,
+        });
+        if (router) conns.push({ from: routerIdx, to: infraIdx });
+
+        // Place children below this infra node
+        const childStartX = branchX + leafW / 2;
+        for (let ci = 0; ci < children.length; ci++) {
+          const childIdx = positioned.length;
+          const row = Math.floor(ci / Math.max(1, Math.ceil(children.length / 2)));
+          const col = ci % Math.max(1, Math.ceil(children.length / 2));
+          const colCount = Math.min(children.length, Math.ceil(children.length / 2));
+          const startX = branchCenterX - ((colCount - 1) * leafW) / 2;
+
+          positioned.push({
+            device: children[ci],
+            x: startX + col * leafW,
+            y: 240 + row * leafH,
+            tier: 2,
+          });
+          conns.push({ from: infraIdx, to: childIdx });
+        }
+      } else {
+        // No infra — children connect directly to router
+        const childStartX = branchX + leafW / 2;
+        for (let ci = 0; ci < children.length; ci++) {
+          const childIdx = positioned.length;
+          positioned.push({
+            device: children[ci],
+            x: childStartX + ci * leafW,
+            y: 140 + Math.floor(ci / 5) * leafH,
+            tier: 2,
+          });
+          if (router) conns.push({ from: routerIdx, to: childIdx });
+        }
       }
+
+      branchX += bw + branchGap;
     }
 
     return { layout: positioned, connections: conns };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [topology]);
 
-  const maxX = layout.length > 0 ? Math.max(500, ...layout.map(l => l.x + 50)) : 500;
-  const maxY = layout.length > 0 ? Math.max(200, ...layout.map(l => l.y + 40)) : 200;
+  const maxX = layout.length > 0 ? Math.max(600, ...layout.map(l => l.x + 60)) : 600;
+  const maxY = layout.length > 0 ? Math.max(300, ...layout.map(l => l.y + 50)) : 300;
   const svgWidth = maxX;
   const svgHeight = maxY;
 
@@ -265,21 +295,23 @@ export function NetworkMap({ onScanComplete }: { onScanComplete?: () => void } =
       ) : (
         <div className="nm-svg-wrap">
           <svg viewBox={`0 0 ${svgWidth} ${svgHeight}`} className="nm-svg">
-            {/* Connection lines following hierarchy */}
+            {/* Tree connection lines */}
             {connections.map((conn, i) => {
               const from = layout[conn.from];
               const to = layout[conn.to];
               if (!from || !to) return null;
               const isInfra = from.tier === 0 && to.tier === 1;
+              const color = isInfra ? "#f0c040" : (TYPE_COLORS[to.device.type] || "#333");
+              // Right-angle tree lines: down from parent, then over to child
+              const midY = from.y + (to.y - from.y) * 0.5;
               return (
-                <line
+                <path
                   key={`conn-${i}`}
-                  x1={from.x} y1={from.y + 10}
-                  x2={to.x} y2={to.y - 10}
-                  stroke={isInfra ? "#f0c040" : (TYPE_COLORS[to.device.type] || "#333")}
-                  strokeWidth={isInfra ? "1" : "0.5"}
-                  opacity={isInfra ? "0.5" : "0.2"}
-                  strokeDasharray={isInfra ? "" : "3,3"}
+                  d={`M ${from.x} ${from.y + 12} L ${from.x} ${midY} L ${to.x} ${midY} L ${to.x} ${to.y - 12}`}
+                  fill="none"
+                  stroke={color}
+                  strokeWidth={isInfra ? "1.2" : "0.7"}
+                  opacity={isInfra ? "0.6" : "0.25"}
                 />
               );
             })}
