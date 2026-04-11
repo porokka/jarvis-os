@@ -44,9 +44,12 @@ export function RadioPlayer() {
         const data = await res.json();
         if (!active) return;
 
-        if (data.playing && data.station && data.station !== currentStation) {
-          playStation(data.station);
-        } else if (!data.playing && currentStation && audioPlaying) {
+        if (data.playing && data.station) {
+          // Play if new station OR same station but browser isn't actually playing
+          if (data.station !== currentStation || !audioPlaying) {
+            playStation(data.station);
+          }
+        } else if (!data.playing && (currentStation || audioPlaying)) {
           stopPlayback();
         }
         // Update now-playing metadata
