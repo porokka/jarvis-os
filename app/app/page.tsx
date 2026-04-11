@@ -212,8 +212,12 @@ export default function JarvisPage() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
 
-  const recognitionRef = useRef<SpeechRecognition | null>(null);
   const historyEndRef = useRef<HTMLDivElement>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
 
   // ─── Check TTS on mount ───
   useEffect(() => {
@@ -300,41 +304,6 @@ export default function JarvisPage() {
     return () => { active = false; clearInterval(id); };
   }, []);
 
-  // ─── Browser STT toggle ───
-  const BROWSER_STT = false; // set true to enable browser mic
-  useEffect(() => {
-    if (!BROWSER_STT) return;
-    const SR =
-      typeof window !== "undefined"
-        ? window.SpeechRecognition || window.webkitSpeechRecognition
-        : null;
-
-    if (SR) {
-      const recognition = new SR();
-      recognition.continuous = false;
-      recognition.interimResults = false;
-      recognition.lang = "en-US";
-
-      recognition.onresult = (e: SpeechRecognitionEvent) => {
-        const text = e.results[0][0].transcript;
-        handleSend(text);
-      };
-
-      recognition.onend = () =>
-        setState((s) => (s === "listening" ? "standby" : s));
-      recognition.onerror = () =>
-        setState((s) => (s === "listening" ? "standby" : s));
-
-      recognitionRef.current = recognition;
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // ─── Auto-scroll chat ───
-  useEffect(() => {
-    historyEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [history]);
-
   // ─── Send input ───
   const lastSpokenRef = useRef("");
 
@@ -342,7 +311,6 @@ export default function JarvisPage() {
     setHistory((h) => [...h, { role: "user", text, timestamp: Date.now() }]);
 
     try {
-      // Send to watcher via bridge server — watcher handles everything
       await fetch("http://localhost:4000/api/input", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -353,10 +321,151 @@ export default function JarvisPage() {
     }
   }, []);
 
+  // ─── WAV encoder ───
+  function audioBufferToWav(buffer: AudioBuffer): Blob {
+    const numChannels = 1;
+    const sampleRate = buffer.sampleRate;
+    const samples = buffer.getChannelData(0);
+    const dataLength = samples.length * 2;
+    const arrayBuffer = new ArrayBuffer(44 + dataLength);
+    const view = new DataView(arrayBuffer);
+
+    function writeStr(offset: number, s: string) {
+      for (let i = 0; i < s.length; i++) view.setUint8(offset + i, s.charCodeAt(i));
+    }
+
+    writeStr(0, "RIFF");
+    view.setUint32(4, 36 + dataLength, true);
+    writeStr(8, "WAVE");
+    writeStr(12, "fmt ");
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true); // PCM
+    view.setUint16(22, numChannels, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * numChannels * 2, true);
+    view.setUint16(32, numChannels * 2, true);
+    view.setUint16(34, 16, true);
+    writeStr(36, "data");
+    view.setUint32(40, dataLength, true);
+
+    let offset = 44;
+    for (let i = 0; i < samples.length; i++) {
+      const s = Math.max(-1, Math.min(1, samples[i]));
+      view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+      offset += 2;
+    }
+
+    return new Blob([arrayBuffer], { type: "audio/wav" });
+  }
+
+  // ─── Browser voice: record → Whisper → send ───
+  const stopRecording = useCallback(() => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+      mediaRecorderRef.current.stop();
+    }
+    if (silenceTimerRef.current) {
+      clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = null;
+    }
+  }, []);
+
+  const startRecording = useCallback(async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+
+      // Set up silence detection via analyser
+      const audioCtx = new AudioContext();
+      const source = audioCtx.createMediaStreamSource(stream);
+      const analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 512;
+      source.connect(analyser);
+      analyserRef.current = analyser;
+
+      const recorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
+      chunksRef.current = [];
+      mediaRecorderRef.current = recorder;
+
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunksRef.current.push(e.data);
+      };
+
+      recorder.onstop = async () => {
+        // Stop mic
+        stream.getTracks().forEach(t => t.stop());
+        audioCtx.close();
+        setState("thinking");
+
+        const blob = new Blob(chunksRef.current, { type: "audio/webm" });
+
+        // Convert to WAV via AudioContext decode
+        try {
+          const arrayBuf = await blob.arrayBuffer();
+          const decodeCtx = new AudioContext({ sampleRate: 16000 });
+          const audioBuf = await decodeCtx.decodeAudioData(arrayBuf);
+          const wavBlob = audioBufferToWav(audioBuf);
+          decodeCtx.close();
+
+          const res = await fetch("/api/transcribe", {
+            method: "POST",
+            body: wavBlob,
+          });
+          const data = await res.json();
+
+          if (data.text && !data.echo) {
+            handleSend(data.text);
+          } else if (data.echo) {
+            console.log("[ECHO] Skipped:", data.text);
+          }
+        } catch (err) {
+          console.error("Transcribe error:", err);
+        }
+        setState("standby");
+      };
+
+      recorder.start(250); // collect chunks every 250ms
+      setState("listening");
+
+      // Auto-stop after silence (check every 300ms)
+      let silentFrames = 0;
+      const dataArray = new Uint8Array(analyser.frequencyBinCount);
+      const checkSilence = () => {
+        if (!analyserRef.current || recorder.state === "inactive") return;
+        analyser.getByteFrequencyData(dataArray);
+        const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
+
+        if (avg < 5) {
+          silentFrames++;
+          if (silentFrames > 8) { // ~2.4s of silence
+            stopRecording();
+            return;
+          }
+        } else {
+          silentFrames = 0;
+        }
+        silenceTimerRef.current = setTimeout(checkSilence, 300);
+      };
+      // Wait 1s before checking silence (let speech start)
+      silenceTimerRef.current = setTimeout(checkSilence, 1000);
+
+    } catch (err) {
+      console.error("Mic error:", err);
+      setState("standby");
+    }
+  }, [handleSend, stopRecording]);
+
+  // ─── Auto-scroll chat ───
+  useEffect(() => {
+    historyEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [history]);
+
   // ─── Voice toggle ───
   function handleVoiceToggle() {
-    // Voice handled by WSL voice_capture.py — click does nothing
-    return;
+    if (state === "listening") {
+      stopRecording();
+    } else if (state === "standby") {
+      startRecording();
+    }
   }
 
   const isProcessing = state === "thinking" || state === "speaking";
@@ -453,9 +562,9 @@ export default function JarvisPage() {
                 </span>
               </div>
               <div className="flex items-center gap-2">
-                <span className={`w-1.5 h-1.5 rounded-full ${recognitionRef.current ? "bg-green-400" : "bg-red-400/50"}`} />
+                <span className="w-1.5 h-1.5 rounded-full bg-green-400" />
                 <span className="text-[9px] tracking-[2px] uppercase opacity-50">
-                  WEB SPEECH API
+                  WHISPER STT
                 </span>
               </div>
             </div>

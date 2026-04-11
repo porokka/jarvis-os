@@ -18,6 +18,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -64,6 +65,68 @@ def get_gpu_stats() -> list:
         return gpus
     except Exception:
         return []
+
+
+# ── Whisper (lazy-loaded on first transcribe request) ──
+
+_whisper_model = None
+
+def get_whisper():
+    global _whisper_model
+    if _whisper_model is None:
+        os.environ["CUDA_VISIBLE_DEVICES"] = ""  # CPU only — GPU for Ollama
+        import whisper
+        print("[JARVIS] Loading Whisper base model...")
+        _whisper_model = whisper.load_model("base")
+        print("[JARVIS] Whisper ready")
+    return _whisper_model
+
+
+def transcribe_audio(audio_bytes: bytes) -> str:
+    """Transcribe WAV audio bytes using Whisper."""
+    model = get_whisper()
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+        f.write(audio_bytes)
+        tmp_path = f.name
+    try:
+        result = model.transcribe(
+            tmp_path, language="en", fp16=False,
+            initial_prompt="Hey JARVIS, OK JARVIS, play radio, check my projects, Suomipop, Radio Nova, StockWatch",
+        )
+        return result["text"].strip()
+    finally:
+        os.unlink(tmp_path)
+
+
+# ── Voice corrections (same as voice_capture.py) ──
+
+TRANSLATIONS = {}
+TRANSLATIONS_FILE = Path("/mnt/d/Jarvis_vault/References/voice-translations.md")
+
+def load_translations():
+    global TRANSLATIONS
+    try:
+        with open(TRANSLATIONS_FILE) as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("|") and "|" in line[1:] and "Heard" not in line and "---" not in line:
+                    parts = [p.strip() for p in line.split("|") if p.strip()]
+                    if len(parts) == 2:
+                        TRANSLATIONS[parts[0].lower()] = parts[1]
+    except:
+        pass
+
+load_translations()
+
+
+def correct_text(text: str) -> str:
+    """Apply voice corrections from vault translations."""
+    lower = text.lower()
+    for heard, corrected in TRANSLATIONS.items():
+        if heard in lower:
+            lower = lower.replace(heard, corrected.lower())
+    # Capitalize first letter
+    return lower[0].upper() + lower[1:] if lower else text
 
 
 class JarvisHandler(http.server.SimpleHTTPRequestHandler):
@@ -137,6 +200,31 @@ class JarvisHandler(http.server.SimpleHTTPRequestHandler):
             except:
                 pass
             self._json_response({"status": "ok"})
+            return
+
+        if path == "/api/transcribe":
+            length = int(self.headers.get("Content-Length", 0))
+            audio_bytes = self.rfile.read(length)
+            try:
+                text = transcribe_audio(audio_bytes)
+                if text:
+                    corrected = correct_text(text)
+                    # Echo detection — check against last output
+                    last_output = read_file("output.txt").lower()
+                    heard_words = set(corrected.lower().split())
+                    output_words = set(last_output.split()) if last_output else set()
+                    overlap = len(heard_words & output_words) / max(len(heard_words), 1)
+                    is_echo = overlap > 0.5
+
+                    self._json_response({
+                        "text": corrected,
+                        "raw": text if corrected != text else None,
+                        "echo": is_echo,
+                    })
+                else:
+                    self._json_response({"text": "", "echo": False})
+            except Exception as e:
+                self._json_response({"error": str(e)}, 500)
             return
 
         if path == "/api/input":
