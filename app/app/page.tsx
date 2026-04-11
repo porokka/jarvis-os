@@ -254,7 +254,7 @@ export default function JarvisPage() {
         // Sync all state from watcher
         if (data.brain) setBrain(data.brain);
 
-        const validStates = ["standby", "thinking", "speaking"];
+        const validStates = ["standby", "thinking", "speaking", "listening"];
         if (validStates.includes(data.state)) {
           setState(data.state as JarvisState);
         }
