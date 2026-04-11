@@ -14,7 +14,7 @@ Built by [Sami Porokka](https://poro-it.com) / Poro-IT OÜ
 - **ReAct Agent Loop** — Think → Tool → Observe → Repeat until task complete
 - **Modular Skills** — 10 plug-and-play skill modules with 20+ tools, enable/disable via config
 - **Voice I/O** — Wake word "Hey JARVIS", Whisper STT, Orpheus TTS with 5.1 center-channel output
-- **Persistent Memory** — MemPalace vector DB + Obsidian vault (2000+ memories)
+- **Persistent Memory** — [MemPalace](https://github.com/milla-jovovich/mempalace) vector DB + Obsidian vault (2000+ memories)
 - **Stark Industries HUD** — Next.js holographic dashboard with GPU monitor, live system log
 - **Home Automation** — Denon AVR, NVIDIA Shield rooms, internet radio, system volume
 - **34 Claude Skills** — Frontend design, SEO, Playwright, React, and more loaded on demand
