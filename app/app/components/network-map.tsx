@@ -157,78 +157,79 @@ export function NetworkMap({ onScanComplete }: { onScanComplete?: () => void } =
     }
   };
 
-  // Layout: 3-tier hierarchy — router → infrastructure → end devices
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-
-  // Tree layout: compact branches, max 3 children per column per branch
-  const INFRA_TYPES_SET = new Set(["switch", "ap"]);
-
   const { layout, connections, svgW, svgH } = useMemo(() => {
     const devices = topology.devices || [];
     if (devices.length === 0) return { layout: [], connections: [], svgW: 600, svgH: 300 };
 
+    // Identify infra by type OR hostname pattern (handles old scan data)
+    function isInfra(d: Device): boolean {
+      if (d.type === "router") return false;
+      if (d.type === "switch" || d.type === "ap") return true;
+      const hn = (d.hostname || "").toLowerCase();
+      if (/^(usw|us-\d|uap|u6-)/.test(hn)) return true;
+      return false;
+    }
+
     const router = devices.find(d => d.type === "router");
-    const infra = devices.filter(d => d.type !== "router" && INFRA_TYPES_SET.has(d.type));
-    const endpoints = devices.filter(d => d.type !== "router" && !INFRA_TYPES_SET.has(d.type));
+    const infra = devices.filter(d => isInfra(d));
+    const endpoints = devices.filter(d => d.type !== "router" && !isInfra(d));
 
     const positioned: { device: Device; x: number; y: number; tier: number }[] = [];
     const conns: { from: number; to: number }[] = [];
 
-    // Distribute endpoints across branches (infra devices or router)
+    const leafW = 110;
+    const leafH = 58;
+    const maxColsPerBranch = 3;
+    const branchGap = 40;
+
+    // Distribute endpoints across infra branches
     const branchCount = Math.max(infra.length, 1);
     const branches: Device[][] = Array.from({ length: branchCount }, () => []);
     for (let i = 0; i < endpoints.length; i++) {
       branches[i % branchCount].push(endpoints[i]);
     }
 
-    // Each branch: max 3 cols of children, stacking rows
-    const leafW = 105;
-    const leafH = 55;
-    const maxColsPerBranch = 3;
-    const branchGap = 30;
-
-    // Calc branch widths
+    // Calc per-branch width (capped at maxCols)
     const branchWidths = branches.map(b => Math.min(b.length, maxColsPerBranch) * leafW);
-    const totalW = branchWidths.reduce((a, b) => a + b, 0) + (branchCount - 1) * branchGap;
-    const canvasW = Math.max(totalW + 100, 500);
+    const totalW = branchWidths.reduce((a, b) => a + b, 0) + Math.max(0, branchCount - 1) * branchGap;
+    const canvasW = Math.max(totalW + 100, 600);
     const centerX = canvasW / 2;
 
-    // Tier 0: Router
+    // Tier 0: Router at top center
     if (router) {
       positioned.push({ device: router, x: centerX, y: 40, tier: 0 });
     }
 
-    // Tier 1 + 2
+    // Tier 1 + 2: branches
     let branchX = (canvasW - totalW) / 2;
-    let maxEndY = 0;
+    let maxEndY = 200;
 
     for (let bi = 0; bi < branchCount; bi++) {
       const children = branches[bi];
       const bw = branchWidths[bi];
       const branchCenterX = branchX + bw / 2;
 
-      // Infra node at tier 1
-      const parentIdx = infra.length > 0 ? positioned.length : 0;
-      if (infra.length > 0) {
-        positioned.push({ device: infra[bi], x: branchCenterX, y: 130, tier: 1 });
+      // Infra node (tier 1) — or router is parent
+      let parentIdx = 0; // default to router
+      if (infra.length > 0 && infra[bi]) {
+        parentIdx = positioned.length;
+        positioned.push({ device: infra[bi], x: branchCenterX, y: 140, tier: 1 });
         if (router) conns.push({ from: 0, to: parentIdx });
       }
 
-      // Children in grid under this branch
+      // Children (tier 2) — grid below parent
       const cols = Math.min(children.length, maxColsPerBranch);
-      for (let ci = 0; ci < children.length; ci++) {
-        const col = ci % cols;
-        const row = Math.floor(ci / cols);
-        const childIdx = positioned.length;
-        const startX = branchCenterX - ((cols - 1) * leafW) / 2;
-        const y = (infra.length > 0 ? 220 : 130) + row * leafH;
+      const childStartY = infra.length > 0 ? 240 : 140;
+      const gridStartX = branchCenterX - ((Math.max(cols, 1) - 1) * leafW) / 2;
 
-        positioned.push({
-          device: children[ci],
-          x: startX + col * leafW,
-          y,
-          tier: 2,
-        });
+      for (let ci = 0; ci < children.length; ci++) {
+        const col = ci % Math.max(cols, 1);
+        const row = Math.floor(ci / Math.max(cols, 1));
+        const childIdx = positioned.length;
+        const x = gridStartX + col * leafW;
+        const y = childStartY + row * leafH;
+
+        positioned.push({ device: children[ci], x, y, tier: 2 });
         conns.push({ from: parentIdx, to: childIdx });
         if (y > maxEndY) maxEndY = y;
       }
