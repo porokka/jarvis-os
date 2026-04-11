@@ -276,10 +276,11 @@ class ReactHandler(BaseHTTPRequestHandler):
 
         if path == "/api/radio":
             try:
-                from skills.radio import get_radio_state, get_stations
+                from skills.radio import get_radio_state, get_stations, get_now_playing
                 self._json_response({
                     **get_radio_state(),
                     "stations": get_stations(),
+                    "now_playing": get_now_playing(),
                 })
             except ImportError:
                 self._json_response({"playing": False, "stations": {}})

@@ -47,6 +47,53 @@ def get_stations() -> dict:
     return {k: {"label": v["label"], "type": v["type"]} for k, v in STATIONS.items()}
 
 
+def get_now_playing() -> dict:
+    """Fetch ICY metadata (song title) from the active stream."""
+    if not _radio_state["playing"] or not _radio_state["stream_url"]:
+        return {"title": None, "artist": None}
+
+    url = _radio_state["stream_url"]
+    try:
+        import urllib.request
+        req = urllib.request.Request(url, headers={"Icy-MetaData": "1"})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            metaint_str = resp.headers.get("icy-metaint")
+            if not metaint_str:
+                return {"title": None, "artist": None}
+
+            metaint = int(metaint_str)
+            # Read past audio data to reach first metadata block
+            resp.read(metaint)
+            # Read metadata length byte (length * 16 = actual size)
+            meta_len_byte = resp.read(1)
+            if not meta_len_byte:
+                return {"title": None, "artist": None}
+            meta_len = meta_len_byte[0] * 16
+            if meta_len == 0:
+                return {"title": None, "artist": None}
+
+            meta_raw = resp.read(meta_len).decode("utf-8", errors="replace").rstrip("\x00")
+
+            # Parse "StreamTitle='Artist - Title';"
+            title = None
+            artist = None
+            if "StreamTitle='" in meta_raw:
+                start = meta_raw.index("StreamTitle='") + 13
+                end = meta_raw.index("';", start)
+                stream_title = meta_raw[start:end].strip()
+                if " - " in stream_title:
+                    artist, title = stream_title.split(" - ", 1)
+                    artist = artist.strip()
+                    title = title.strip()
+                elif stream_title:
+                    title = stream_title
+
+            return {"title": title, "artist": artist}
+    except Exception as e:
+        print(f"[RADIO] Now-playing error: {e}")
+        return {"title": None, "artist": None}
+
+
 # -- Stream URL helpers --
 
 def _get_bauer_stream(station_id: str) -> str:

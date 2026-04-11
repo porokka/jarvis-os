@@ -31,6 +31,7 @@ export function RadioPlayer() {
   const [currentStation, setCurrentStation] = useState<string | null>(null);
   const [audioPlaying, setAudioPlaying] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  const [nowPlaying, setNowPlaying] = useState<{ title: string | null; artist: string | null }>({ title: null, artist: null });
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const hlsRef = useRef<Hls | null>(null);
 
@@ -44,11 +45,13 @@ export function RadioPlayer() {
         if (!active) return;
 
         if (data.playing && data.station && data.station !== currentStation) {
-          // Voice command started a station — play it
           playStation(data.station);
         } else if (!data.playing && currentStation && audioPlaying) {
-          // Voice said "stop radio"
           stopPlayback();
+        }
+        // Update now-playing metadata
+        if (data.now_playing) {
+          setNowPlaying(data.now_playing);
         }
       } catch {}
     }
@@ -139,14 +142,23 @@ export function RadioPlayer() {
       </div>
 
       {audioPlaying && currentLabel ? (
-        <div className="radio-now-playing">
-          <div className="radio-eq">
-            <span className="eq-bar" />
-            <span className="eq-bar" />
-            <span className="eq-bar" />
+        <div className="radio-now-playing-wrap">
+          <div className="radio-now-playing">
+            <div className="radio-eq">
+              <span className="eq-bar" />
+              <span className="eq-bar" />
+              <span className="eq-bar" />
+            </div>
+            <span className="radio-station-name">{currentLabel}</span>
+            <button className="radio-stop" onClick={handleStop} title="Stop">&#9632;</button>
           </div>
-          <span className="radio-station-name">{currentLabel}</span>
-          <button className="radio-stop" onClick={handleStop} title="Stop">&#9632;</button>
+          {(nowPlaying.title || nowPlaying.artist) && (
+            <div className="radio-track">
+              {nowPlaying.artist && <span className="radio-artist">{nowPlaying.artist}</span>}
+              {nowPlaying.artist && nowPlaying.title && <span className="radio-sep"> — </span>}
+              {nowPlaying.title && <span className="radio-title-text">{nowPlaying.title}</span>}
+            </div>
+          )}
         </div>
       ) : (
         <div className="radio-offline">
@@ -189,8 +201,29 @@ export function RadioPlayer() {
           background: #40f080; box-shadow: 0 0 6px #40f08080;
           animation: radio-pulse 2s ease-in-out infinite;
         }
+        .radio-now-playing-wrap {
+          padding: 0;
+        }
         .radio-now-playing {
-          display: flex; align-items: center; gap: 8px; padding: 6px 12px 8px;
+          display: flex; align-items: center; gap: 8px; padding: 6px 12px 4px;
+        }
+        .radio-track {
+          padding: 0 12px 8px 26px;
+          font-size: 9px;
+          color: rgba(255, 255, 255, 0.45);
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .radio-artist {
+          color: var(--accent);
+          opacity: 0.7;
+        }
+        .radio-sep {
+          opacity: 0.3;
+        }
+        .radio-title-text {
+          opacity: 0.6;
         }
         .radio-eq { display: flex; align-items: flex-end; gap: 1.5px; height: 12px; }
         .eq-bar {
