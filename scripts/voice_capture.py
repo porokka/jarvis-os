@@ -27,6 +27,20 @@ BRIDGE = "/tmp/jarvis"
 INPUT_FILE = os.path.join(BRIDGE, "input.txt")
 STATE_FILE = os.path.join(BRIDGE, "state.txt")
 
+VAULT_DIR = "/mnt/d/Jarvis_vault" if os.name != "nt" else "D:/Jarvis_vault"
+TRANSCRIPT_LOG = os.path.join(VAULT_DIR, "transcript.log")
+
+
+def log_transcript(tag: str, text: str):
+    """Append timestamped transcript entry to persistent log."""
+    try:
+        from datetime import datetime
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with open(TRANSCRIPT_LOG, "a", encoding="utf-8") as f:
+            f.write(f"[{ts}] [{tag}] {text}\n")
+    except Exception:
+        pass
+
 SAMPLE_RATE = 16000
 SILENCE_DURATION = 2.5    # long patience — people pause mid-sentence
 MAX_DURATION = 15         # allow long commands
@@ -240,6 +254,7 @@ def send_to_jarvis(text):
     os.makedirs(BRIDGE, exist_ok=True)
     with open(INPUT_FILE, "w") as f:
         f.write(text)
+    log_transcript("SENT", text)
     print(f"  → SENT: {text}")
 
 
@@ -284,21 +299,26 @@ with sd.InputStream(samplerate=SAMPLE_RATE, channels=1, dtype='float32', blocksi
         # Single word noise
         if lower in noise_patterns or len(words) < 2:
             print(f"  [NOISE] '{text}' — skipped")
+            log_transcript("NOISE", text)
             continue
 
         # Long random sentences = TV/background audio, not a command
         # But allow if it contains a wake word (e.g. "Hey JARVIS, do something long")
         if not awake and len(words) > 12 and not has_wake_word(text):
             print(f"  [TV/BG] '{text[:50]}...' — too long for wake word, skipped")
+            log_transcript("TV/BG", text)
             continue
 
         # Fuzzy correction disabled — exact matches only
         corrected = correct_text(text)
         if corrected != text:
             print(f"[HEARD]: {text} → [CORRECTED]: {corrected}")
+            log_transcript("HEARD", text)
+            log_transcript("CORRECTED", corrected)
             text = corrected
         else:
             print(f"[HEARD]: {text}")
+            log_transcript("HEARD", text)
 
         now = time.time()
 
