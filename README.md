@@ -12,11 +12,11 @@ Built by [Sami Porokka](https://poro-it.com) / Poro-IT OÜ
 
 - **Multi-Model Routing** — Queries routed to the best local model (fast / reason / code / deep / cloud)
 - **ReAct Agent Loop** — Think → Tool → Observe → Repeat until task complete
-- **Modular Skills** — 10 plug-and-play skill modules with 20+ tools, enable/disable via config
+- **Modular Skills** — 13 plug-and-play skill modules with 25+ tools, enable/disable via config
 - **Voice I/O** — Wake word "Hey JARVIS", Whisper STT, Orpheus TTS with 5.1 center-channel output
 - **Persistent Memory** — [MemPalace](https://github.com/milla-jovovich/mempalace) vector DB + Obsidian vault (2000+ memories)
 - **Stark Industries HUD** — Next.js holographic dashboard with GPU monitor, live system log
-- **Home Automation** — Denon AVR, NVIDIA Shield rooms, internet radio, system volume
+- **Home Automation** — Denon AVR, NVIDIA Shield, LG TV, Panasonic Blu-ray, internet radio
 - **34 Claude Skills** — Frontend design, SEO, Playwright, React, and more loaded on demand
 
 ---
@@ -65,6 +65,9 @@ JARVIS uses a modular skill system. Each skill is a self-contained Python module
 | **web** | `web_search` `open_url` | DuckDuckGo search + browser | [Guide](docs/skills/web.md) |
 | **shell** | `shell_command` `read_file` | Safe shell execution + file reading | [Guide](docs/skills/shell.md) |
 | **claude_skills** | `list_skills` `use_skill` | Browse/load 34 Claude Code skills | [Guide](docs/skills/claude_skills.md) |
+| **lg_tv** | `lg_tv` | LG webOS TV — power, volume, inputs, apps | [Guide](docs/skills/lg_tv.md) |
+| **panasonic_bd** | `bluray` | Panasonic UB9000 4K Blu-ray — play, pause, chapters | [Guide](docs/skills/panasonic_bd.md) |
+| **network** | `scan_network` | Network scan with device identification + topology map | [Guide](docs/skills/network.md) |
 
 **Full skill system documentation:** [docs/SKILLS.md](docs/SKILLS.md)
 

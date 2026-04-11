@@ -264,3 +264,6 @@ Tool calls are logged during execution:
 | Web Search | `skills/web.py` | [docs/skills/web.md](skills/web.md) |
 | Shell | `skills/shell.py` | [docs/skills/shell.md](skills/shell.md) |
 | Claude Skills | `skills/claude_skills.py` | [docs/skills/claude_skills.md](skills/claude_skills.md) |
+| LG TV | `skills/lg_tv.py` | [docs/skills/lg_tv.md](skills/lg_tv.md) |
+| Panasonic Blu-ray | `skills/panasonic_bd.py` | [docs/skills/panasonic_bd.md](skills/panasonic_bd.md) |
+| Network | `skills/network.py` | [docs/skills/network.md](skills/network.md) |
