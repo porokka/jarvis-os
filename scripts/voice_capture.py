@@ -260,6 +260,8 @@ def send_to_jarvis(text):
 
 awake = not WAKE_MODE  # always-on if no --wake flag
 awake_until = 0
+last_speaking_end = 0  # timestamp when JARVIS stopped speaking
+SPEAKING_COOLDOWN = 2.5  # seconds to ignore audio after JARVIS speaks
 
 print("Listening for voice... (speak loudly to trigger)")
 
@@ -268,12 +270,24 @@ with sd.InputStream(samplerate=SAMPLE_RATE, channels=1, dtype='float32', blocksi
     state = get_state()
 
     if state in ("thinking", "speaking"):
+        last_speaking_end = time.time()
+        time.sleep(0.5)
+        continue
+
+    # Cooldown after JARVIS stops speaking — ignore its own echo
+    if time.time() - last_speaking_end < SPEAKING_COOLDOWN:
         time.sleep(0.3)
         continue
 
     try:
         # Stage 1: VAD waits for real speech (not noise/traffic)
         first_chunk = wait_for_speech(mic)
+
+        # Re-check state — JARVIS may have started speaking while VAD was waiting
+        state = get_state()
+        if state in ("thinking", "speaking"):
+            time.sleep(1.0)
+            continue
 
         # Stage 2: record until VAD says speech stopped
         audio = record_until_silence(mic, first_chunk)
