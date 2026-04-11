@@ -153,71 +153,96 @@ export function NetworkMap({ onScanComplete }: { onScanComplete?: () => void } =
     }
   };
 
-  // Layout: router at top, devices in a grid below with proper spacing
-  const layout = useMemo(() => {
+  // Layout: 3-tier hierarchy — router → infrastructure → end devices
+  const INFRA_TYPES = new Set(["switch", "ap", "router"]);
+
+  const { layout, connections } = useMemo(() => {
     const devices = topology.devices || [];
-    if (devices.length === 0) return [];
+    if (devices.length === 0) return { layout: [], connections: [] };
 
     const router = devices.find(d => d.type === "router");
-    const others = devices.filter(d => d.type !== "router");
+    const infra = devices.filter(d => d.type !== "router" && INFRA_TYPES.has(d.type));
+    const endpoints = devices.filter(d => d.type !== "router" && !INFRA_TYPES.has(d.type));
 
-    const positioned: { device: Device; x: number; y: number }[] = [];
+    const positioned: { device: Device; x: number; y: number; tier: number }[] = [];
+    const conns: { from: number; to: number }[] = [];
 
-    // Grid layout params
-    const cols = Math.min(6, Math.max(3, Math.ceil(Math.sqrt(others.length))));
-    const cellW = 90;
-    const cellH = 55;
-    const gridW = cols * cellW;
-    const totalW = Math.max(gridW + 60, 500);
-    const centerX = totalW / 2;
+    const cellW = 95;
+    const tierGap = 75;
+
+    // Tier 0: Router
     const routerY = 35;
+    const allCount = Math.max(infra.length, endpoints.length, 3);
+    const totalW = Math.max(allCount * cellW + 60, 500);
+    const centerX = totalW / 2;
 
-    // Router at top center
     if (router) {
-      positioned.push({ device: router, x: centerX, y: routerY });
+      positioned.push({ device: router, x: centerX, y: routerY, tier: 0 });
     }
 
-    // Sort devices: group by type for visual clustering
-    const typeOrder = ["desktop", "server", "ai", "media", "shield", "tv", "phone", "speaker", "nas", "printer", "iot", "receiver", "cast", "unknown"];
-    others.sort((a, b) => {
-      const ai = typeOrder.indexOf(a.type);
-      const bi = typeOrder.indexOf(b.type);
-      return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
-    });
+    // Tier 1: Infrastructure (switches, APs)
+    const infraY = routerY + tierGap;
+    if (infra.length > 0) {
+      const startX = centerX - ((infra.length - 1) * cellW) / 2;
+      for (let i = 0; i < infra.length; i++) {
+        const idx = positioned.length;
+        positioned.push({ device: infra[i], x: startX + i * cellW, y: infraY, tier: 1 });
+        // Connect to router
+        if (router) conns.push({ from: 0, to: idx });
+      }
+    }
 
-    // Place in grid
-    const startY = routerY + 65;
-    const startX = centerX - ((Math.min(cols, others.length) - 1) * cellW) / 2;
+    // Tier 2: End devices — distribute under infra or directly under router
+    const endY = (infra.length > 0 ? infraY : routerY) + tierGap;
+    const cols = Math.min(7, Math.max(3, Math.ceil(Math.sqrt(endpoints.length + 1))));
+    const startX = centerX - ((Math.min(cols, endpoints.length) - 1) * cellW) / 2;
 
-    for (let i = 0; i < others.length; i++) {
+    for (let i = 0; i < endpoints.length; i++) {
       const col = i % cols;
       const row = Math.floor(i / cols);
+      const idx = positioned.length;
       positioned.push({
-        device: others[i],
+        device: endpoints[i],
         x: startX + col * cellW,
-        y: startY + row * cellH,
+        y: endY + row * 55,
+        tier: 2,
       });
+
+      // Connect to nearest infra device, or router if no infra
+      if (infra.length > 0) {
+        // Assign to infra device by distributing evenly
+        const infraIdx = (i % infra.length) + (router ? 1 : 0);
+        conns.push({ from: infraIdx, to: idx });
+      } else if (router) {
+        conns.push({ from: 0, to: idx });
+      }
     }
 
-    return positioned;
+    return { layout: positioned, connections: conns };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [topology]);
 
-  const maxX = Math.max(500, ...layout.map(l => l.x + 50));
-  const maxY = Math.max(200, ...layout.map(l => l.y + 40));
+  const maxX = layout.length > 0 ? Math.max(500, ...layout.map(l => l.x + 50)) : 500;
+  const maxY = layout.length > 0 ? Math.max(200, ...layout.map(l => l.y + 40)) : 200;
   const svgWidth = maxX;
   const svgHeight = maxY;
-  const routerPos = layout.find(l => l.device.type === "router");
 
-  // Better display name: prefer hostname, fallback to vendor + last octet
+  // Display name: hostname > vendor+type > type+IP
   function displayName(d: Device): string {
-    if (d.hostname && d.hostname !== d.ip && d.hostname.length > 1) {
-      return d.hostname.length > 16 ? d.hostname.slice(0, 14) + ".." : d.hostname;
-    }
-    if (d.vendor) {
-      const lastOctet = d.ip.split(".").pop();
-      return `${d.vendor} (.${lastOctet})`;
-    }
-    return d.ip.replace("192.168.0.", ".0.");
+    const name = d.hostname && d.hostname !== d.ip && d.hostname.length > 1 ? d.hostname : "";
+    if (name) return name.length > 16 ? name.slice(0, 14) + ".." : name;
+
+    const typeLabel: Record<string, string> = {
+      router: "Router", desktop: "PC", laptop: "Laptop", server: "Server",
+      phone: "Phone", media: "Media", shield: "Shield", tv: "TV",
+      nas: "NAS", printer: "Printer", speaker: "Speaker", iot: "IoT",
+      camera: "Camera", receiver: "Receiver", cast: "Cast", ai: "AI",
+      ap: "Access Point", switch: "Switch", unknown: "Device",
+    };
+    const t = typeLabel[d.type] || "Device";
+    const octet = d.ip.split(".").pop();
+    if (d.vendor) return `${d.vendor} ${t}`;
+    return `${t} .${octet}`;
   }
 
   return (
@@ -240,18 +265,24 @@ export function NetworkMap({ onScanComplete }: { onScanComplete?: () => void } =
       ) : (
         <div className="nm-svg-wrap">
           <svg viewBox={`0 0 ${svgWidth} ${svgHeight}`} className="nm-svg">
-            {/* Connection lines from router to each device */}
-            {routerPos && layout.filter(l => l.device.type !== "router").map((l, i) => (
-              <line
-                key={`line-${i}`}
-                x1={routerPos.x} y1={routerPos.y + 9}
-                x2={l.x} y2={l.y - 9}
-                stroke={TYPE_COLORS[l.device.type] || "#333"}
-                strokeWidth="0.5"
-                opacity="0.3"
-                strokeDasharray="3,3"
-              />
-            ))}
+            {/* Connection lines following hierarchy */}
+            {connections.map((conn, i) => {
+              const from = layout[conn.from];
+              const to = layout[conn.to];
+              if (!from || !to) return null;
+              const isInfra = from.tier === 0 && to.tier === 1;
+              return (
+                <line
+                  key={`conn-${i}`}
+                  x1={from.x} y1={from.y + 10}
+                  x2={to.x} y2={to.y - 10}
+                  stroke={isInfra ? "#f0c040" : (TYPE_COLORS[to.device.type] || "#333")}
+                  strokeWidth={isInfra ? "1" : "0.5"}
+                  opacity={isInfra ? "0.5" : "0.2"}
+                  strokeDasharray={isInfra ? "" : "3,3"}
+                />
+              );
+            })}
 
             {/* Devices */}
             {layout.map((l, i) => {
