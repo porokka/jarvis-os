@@ -65,9 +65,9 @@ class OrpheusEngine:
 
         print("[TTS] Loading SNAC decoder...")
         self.snac = snac.SNAC.from_pretrained("hubertsiuzdak/snac_24khz").eval()
-        if torch.cuda.is_available():
-            self.snac = self.snac.cuda()
-        print("[TTS] SNAC loaded")
+        # Keep SNAC on CPU to avoid VRAM conflicts with Ollama
+        self.snac_device = "cpu"
+        print("[TTS] SNAC loaded (CPU)")
 
     def _format_prompt(self, text: str) -> str:
         """Format text with voice prefix for Orpheus."""
@@ -108,11 +108,10 @@ class OrpheusEngine:
         if not layer_0:
             return np.array([], dtype=np.float32)
 
-        device = "cuda" if torch.cuda.is_available() else "cpu"
         codes = [
-            torch.tensor([layer_0], dtype=torch.long, device=device),
-            torch.tensor([layer_1], dtype=torch.long, device=device),
-            torch.tensor([layer_2], dtype=torch.long, device=device),
+            torch.tensor([layer_0], dtype=torch.long, device=self.snac_device),
+            torch.tensor([layer_1], dtype=torch.long, device=self.snac_device),
+            torch.tensor([layer_2], dtype=torch.long, device=self.snac_device),
         ]
 
         with torch.no_grad():

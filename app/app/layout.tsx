@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "JARVIS",
-  description: "Local AI Assistant — Operation Jarvis",
+  title: "J.A.R.V.I.S",
+  description: "Just A Rather Very Intelligent System — Poro-IT",
 };
 
 export default function RootLayout({

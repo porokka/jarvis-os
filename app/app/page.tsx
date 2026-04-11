@@ -5,6 +5,11 @@ import { JarvisScene } from "./components/face/jarvis-scene";
 import { ChatHistory } from "./components/chat-history";
 import { InputBar } from "./components/input-bar";
 import { ApprovalPanel } from "./components/approval-panel";
+import { HudPanel } from "./components/hud-panel";
+import { GpuMonitor } from "./components/gpu-monitor";
+import { SystemLog } from "./components/system-log";
+import { TimersWidget } from "./components/timers-widget";
+import { SettingsPanel } from "./components/settings-panel";
 
 type JarvisState = "standby" | "listening" | "thinking" | "speaking" | "asking";
 
@@ -15,18 +20,201 @@ interface HistoryEntry {
   timestamp: number;
 }
 
+interface BridgeStatus {
+  state?: string;
+  emotion?: string;
+  lastOutput?: string;
+  lastInput?: string;
+  brain?: string;
+}
+
+// ─── Clock Component ───
+function HudClock() {
+  const [time, setTime] = useState("");
+  const [date, setDate] = useState("");
+
+  useEffect(() => {
+    function tick() {
+      const now = new Date();
+      setTime(now.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit" }));
+      setDate(now.toLocaleDateString("en-GB", { weekday: "short", day: "2-digit", month: "short", year: "numeric" }));
+    }
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  return (
+    <div className="text-right">
+      <div className="text-sm tabular-nums glow-text text-[var(--accent)]">{time}</div>
+      <div className="text-[8px] tracking-[2px] uppercase opacity-30">{date}</div>
+    </div>
+  );
+}
+
+// ─── Brain Indicator ───
+function BrainIndicator({ brain }: { brain: string }) {
+  const labels: Record<string, { label: string; color: string }> = {
+    claude: { label: "CLAUDE", color: "#c080f0" },
+    ollama_fast: { label: "QWEN 8B", color: "#40f080" },
+    ollama_code: { label: "QWEN CODER 30B", color: "#40a0f0" },
+    ollama_reason: { label: "QWEN 30B", color: "#f0c040" },
+    ollama_deep: { label: "LLAMA 70B", color: "#f08040" },
+  };
+
+  const b = labels[brain] || { label: brain.toUpperCase(), color: "#40a0f0" };
+
+  return (
+    <div className="flex items-center gap-2">
+      <span
+        className="w-1.5 h-1.5 rounded-full"
+        style={{ background: b.color, boxShadow: `0 0 6px ${b.color}60` }}
+      />
+      <span className="text-[9px] tracking-[2px] uppercase" style={{ color: b.color }}>
+        {b.label}
+      </span>
+    </div>
+  );
+}
+
+// ─── State Indicator with pulsing ───
+function StateIndicator({ state, pendingApprovals }: { state: JarvisState; pendingApprovals: number }) {
+  const stateLabel: Record<string, string> = {
+    standby: "STANDBY",
+    listening: "LISTENING",
+    thinking: "PROCESSING",
+    speaking: "SPEAKING",
+    asking: "AWAITING APPROVAL",
+  };
+
+  const stateColor: Record<string, string> = {
+    standby: "#40f080",
+    listening: "#f03c3c",
+    thinking: "#f0c040",
+    speaking: "#40a0f0",
+    asking: "#f0c040",
+  };
+
+  const color = stateColor[state] || "#40a0f0";
+
+  return (
+    <div className={`flex items-center gap-2 state-${state}`}>
+      <span
+        className="w-2 h-2 rounded-full"
+        style={{ background: color, boxShadow: `0 0 8px ${color}80` }}
+      />
+      <span
+        className="text-[10px] tracking-[3px] uppercase font-medium"
+        style={{ color }}
+      >
+        {stateLabel[state]}
+      </span>
+      {pendingApprovals > 0 && (
+        <span
+          className="inline-flex items-center justify-center w-4 h-4 rounded-full text-[8px]"
+          style={{ background: `${color}20`, color }}
+        >
+          {pendingApprovals}
+        </span>
+      )}
+    </div>
+  );
+}
+
+// ─── Arc Reactor Decorative Ring (SVG) ───
+function ArcReactorRing() {
+  return (
+    <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-[1]">
+      <svg
+        width="320"
+        height="320"
+        viewBox="0 0 320 320"
+        className="reactor-pulse opacity-40"
+      >
+        {/* Outer ring */}
+        <circle
+          cx="160" cy="160" r="155"
+          fill="none"
+          stroke="var(--accent)"
+          strokeWidth="0.5"
+          opacity="0.2"
+        />
+        {/* Rotating dashed ring */}
+        <circle
+          cx="160" cy="160" r="148"
+          fill="none"
+          stroke="var(--accent)"
+          strokeWidth="0.8"
+          strokeDasharray="6 14"
+          opacity="0.25"
+          className="reactor-ring"
+        />
+        {/* Inner ring */}
+        <circle
+          cx="160" cy="160" r="140"
+          fill="none"
+          stroke="var(--accent)"
+          strokeWidth="0.3"
+          opacity="0.15"
+        />
+        {/* Tick marks */}
+        {Array.from({ length: 36 }).map((_, i) => {
+          const angle = (i * 10 * Math.PI) / 180;
+          const r1 = 152;
+          const r2 = i % 3 === 0 ? 158 : 155;
+          const cos = Math.round(Math.cos(angle) * 1000) / 1000;
+          const sin = Math.round(Math.sin(angle) * 1000) / 1000;
+          return (
+            <line
+              key={i}
+              x1={160 + r1 * cos}
+              y1={160 + r1 * sin}
+              x2={160 + r2 * cos}
+              y2={160 + r2 * sin}
+              stroke="var(--accent)"
+              strokeWidth={i % 3 === 0 ? "0.8" : "0.4"}
+              opacity={i % 3 === 0 ? "0.3" : "0.15"}
+            />
+          );
+        })}
+        {/* Hexagonal center hint */}
+        <polygon
+          points="160,90 221,125 221,195 160,230 99,195 99,125"
+          fill="none"
+          stroke="var(--accent)"
+          strokeWidth="0.4"
+          opacity="0.08"
+        />
+      </svg>
+    </div>
+  );
+}
+
+// ─── Horizontal HUD Line Decoration ───
+function HudLine({ className = "" }: { className?: string }) {
+  return (
+    <div className={`hud-divider hud-sweep ${className}`} />
+  );
+}
+
+// ═══════════════════════════════════════════
+// MAIN PAGE
+// ═══════════════════════════════════════════
 export default function JarvisPage() {
   const [state, setState] = useState<JarvisState>("standby");
   const [emotion, setEmotion] = useState("neutral");
-  const [output, setOutput] = useState("Ready.");
+  const [output, setOutput] = useState("Systems online. Ready for input.");
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [ttsAvailable, setTtsAvailable] = useState(false);
   const [pendingApprovals, setPendingApprovals] = useState(0);
+  const [brain, setBrain] = useState("claude");
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false);
 
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const historyEndRef = useRef<HTMLDivElement>(null);
 
-  // Check TTS availability on mount
+  // ─── Check TTS on mount ───
   useEffect(() => {
     fetch("/api/tts")
       .then((r) => r.json())
@@ -34,8 +222,87 @@ export default function JarvisPage() {
       .catch(() => {});
   }, []);
 
-  // Initialize speech recognition
+  // ─── Poll watcher state — single source of truth ───
   useEffect(() => {
+    let active = true;
+
+    async function poll() {
+      try {
+        const res = await fetch("http://localhost:4000/api/state");
+        const data = await res.json();
+        if (!active) return;
+
+        // Sync all state from watcher
+        if (data.brain) setBrain(data.brain);
+
+        const validStates = ["standby", "thinking", "speaking"];
+        if (validStates.includes(data.state)) {
+          setState(data.state as JarvisState);
+        }
+
+        if (data.emotion) setEmotion(data.emotion);
+
+        // Update output when it changes
+        if (data.lastOutput && data.lastOutput !== output) {
+          setOutput(data.lastOutput);
+
+          // Add to history if new
+          setHistory((h) => {
+            const last = h[h.length - 1];
+            if (last?.role === "jarvis" && last.text === data.lastOutput) return h;
+            return [...h, { role: "jarvis", text: data.lastOutput, timestamp: Date.now() }];
+          });
+
+          // Browser TTS — toggle via BROWSER_TTS
+          const BROWSER_TTS = false; // off — mic picks up speaker output causing loops
+          if (BROWSER_TTS && data.lastOutput !== lastSpokenRef.current) {
+            lastSpokenRef.current = data.lastOutput;
+            if ("speechSynthesis" in window) {
+              // Set speaking state so voice capture mutes the mic
+              fetch("http://localhost:4000/api/input", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ text: "__TTS_START__" }),
+              }).catch(() => {});
+              // Write speaking state directly
+              fetch("http://localhost:4000/api/state-override", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ state: "speaking" }),
+              }).catch(() => {});
+
+              const utter = new SpeechSynthesisUtterance(data.lastOutput);
+              utter.lang = "en-GB";
+              utter.rate = 1;
+              utter.pitch = 0.9;
+              const voices = speechSynthesis.getVoices();
+              const british = voices.find(v => v.lang === "en-GB") || voices.find(v => v.lang.startsWith("en"));
+              if (british) utter.voice = british;
+              utter.onend = () => {
+                // Unmute mic
+                fetch("http://localhost:4000/api/state-override", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ state: "standby" }),
+                }).catch(() => {});
+              };
+              speechSynthesis.cancel();
+              speechSynthesis.speak(utter);
+            }
+          }
+        }
+      } catch {}
+    }
+
+    poll();
+    const id = setInterval(poll, 500);
+    return () => { active = false; clearInterval(id); };
+  }, []);
+
+  // ─── Browser STT toggle ───
+  const BROWSER_STT = false; // set true to enable browser mic
+  useEffect(() => {
+    if (!BROWSER_STT) return;
     const SR =
       typeof window !== "undefined"
         ? window.SpeechRecognition || window.webkitSpeechRecognition
@@ -62,105 +329,40 @@ export default function JarvisPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Auto-scroll history
+  // ─── Auto-scroll chat ───
   useEffect(() => {
     historyEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [history]);
 
-  const handleSend = useCallback(async (text: string) => {
-    setState("thinking");
-    setOutput(`"${text}"`);
+  // ─── Send input ───
+  const lastSpokenRef = useRef("");
 
+  const handleSend = useCallback(async (text: string) => {
     setHistory((h) => [...h, { role: "user", text, timestamp: Date.now() }]);
 
     try {
-      const res = await fetch("/api/input", {
+      // Send to watcher via bridge server — watcher handles everything
+      await fetch("http://localhost:4000/api/input", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text }),
       });
-
-      const data = await res.json();
-
-      setState("speaking");
-      setOutput(data.response);
-      setEmotion(data.emotion || "neutral");
-
-      setHistory((h) => [
-        ...h,
-        {
-          role: "jarvis",
-          text: data.response,
-          emotion: data.emotion,
-          timestamp: Date.now(),
-        },
-      ]);
-
-      // Play TTS audio if available
-      if (data.audio) {
-        const wav = Uint8Array.from(atob(data.audio), (c) =>
-          c.charCodeAt(0)
-        );
-        const blob = new Blob([wav], { type: "audio/wav" });
-        const url = URL.createObjectURL(blob);
-        const audio = new Audio(url);
-        audio.onended = () => {
-          URL.revokeObjectURL(url);
-          setState("standby");
-          setEmotion("neutral");
-          fetch("/api/state", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ finishSpeaking: true }),
-          });
-        };
-        audio.play().catch(() => setState("standby"));
-      } else {
-        setTimeout(() => {
-          setState("standby");
-          setEmotion("neutral");
-        }, 2000);
-      }
     } catch {
-      setOutput("Connection error. Is the server running?");
-      setState("standby");
+      setOutput("Connection error. Is the bridge server running?");
     }
   }, []);
 
+  // ─── Voice toggle ───
   function handleVoiceToggle() {
-    if (!recognitionRef.current) {
-      setOutput("Voice not supported. Use text input.");
-      return;
-    }
-
-    if (state === "listening") {
-      recognitionRef.current.stop();
-      setState("standby");
-    } else if (state === "standby") {
-      setState("listening");
-      recognitionRef.current.start();
-    }
+    // Voice handled by WSL voice_capture.py — click does nothing
+    return;
   }
 
-  const stateLabel: Record<string, string> = {
-    standby: "STANDBY",
-    listening: "LISTENING",
-    thinking: "THINKING",
-    speaking: "SPEAKING",
-    asking: "AWAITING APPROVAL",
-  };
-
-  const stateColor: Record<string, string> = {
-    standby: "text-green-400/50",
-    listening: "text-red-400/70",
-    thinking: "text-yellow-400/60",
-    speaking: "text-blue-400/60",
-    asking: "text-amber-400/70",
-  };
+  const isProcessing = state === "thinking" || state === "speaking";
 
   return (
-    <main className="flex-1 flex flex-col items-center select-none h-screen overflow-hidden bg-[#06060b]">
-      {/* Approval Panel */}
+    <main className="h-screen w-screen overflow-hidden bg-[var(--background)] hud-grid scan-lines select-none relative">
+      {/* ════════════ Approval Panel ════════════ */}
       <ApprovalPanel
         onApprovalChange={(count) => {
           setPendingApprovals(count);
@@ -169,64 +371,249 @@ export default function JarvisPage() {
         }}
       />
 
-      {/* State indicator */}
-      <div
-        className={`fixed top-6 right-6 text-xs tracking-[3px] uppercase z-10 ${stateColor[state]}`}
-      >
-        {stateLabel[state]}
-        {pendingApprovals > 0 && (
-          <span className="ml-2 inline-flex items-center justify-center w-4 h-4 rounded-full bg-amber-400/20 text-amber-400 text-[9px]">
-            {pendingApprovals}
-          </span>
-        )}
-      </div>
-
-      {/* TTS indicator */}
-      <div className="fixed top-6 left-6 text-xs tracking-[2px] uppercase text-white/20 z-10">
-        {ttsAvailable ? "ORPHEUS TTS" : "NO TTS"}
-      </div>
-
-      {/* 3D Face — takes upper portion */}
-      <div
-        className="w-full flex-1 min-h-0 cursor-pointer relative"
-        onClick={handleVoiceToggle}
-      >
-        <JarvisScene
-          emotion={emotion}
-          speaking={state === "speaking"}
-          thinking={state === "thinking"}
-        />
-
-        {/* Listening overlay */}
-        {state === "listening" && (
-          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 text-red-400/70 text-xs tracking-[3px] uppercase animate-pulse">
-            LISTENING — CLICK TO STOP
+      {/* ════════════ TOP BAR ════════════ */}
+      <header className="absolute top-0 left-0 right-0 z-20 flex items-center justify-between px-6 py-3">
+        {/* Left: Title + TTS */}
+        <div className="flex items-center gap-4">
+          <div>
+            <h1 className="text-sm tracking-[6px] uppercase glow-text text-[var(--accent)] font-bold">
+              J.A.R.V.I.S
+            </h1>
+            <div className="text-[7px] tracking-[3px] uppercase opacity-25 mt-0.5">
+              {ttsAvailable ? "ORPHEUS TTS ACTIVE" : "TEXT MODE"} &middot; LOCAL AI ASSISTANT
+            </div>
           </div>
-        )}
+        </div>
+
+        {/* Center: State */}
+        <StateIndicator state={state} pendingApprovals={pendingApprovals} />
+
+        {/* Right: Brain + Clock + Settings */}
+        <div className="flex items-center gap-6">
+          <BrainIndicator brain={brain} />
+          <div className="w-px h-6 bg-[var(--panel-border)]" />
+          <HudClock />
+          <button
+            onClick={() => setSettingsOpen(true)}
+            className="w-7 h-7 flex items-center justify-center rounded-full opacity-30 hover:opacity-70 transition-opacity"
+            title="Settings"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="1.5">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+            </svg>
+          </button>
+        </div>
+      </header>
+
+      <HudLine className="absolute top-[52px] left-0 right-0 z-20" />
+
+      {/* ════════════ MAIN GRID ════════════ */}
+      <div className="absolute inset-0 top-[53px] bottom-0 flex">
+
+        {/* ──── LEFT PANEL ──── */}
+        <aside className="w-[260px] flex-shrink-0 flex flex-col gap-3 p-3 overflow-y-auto scrollbar-hud z-10">
+          <GpuMonitor />
+
+          {/* Emotion indicator */}
+          <HudPanel title="EMOTION STATE">
+            <div className="p-3 flex items-center gap-3">
+              <div className={`
+                w-8 h-8 rounded-full flex items-center justify-center text-lg
+                ${emotion === "happy" ? "bg-green-400/10 text-green-400" :
+                  emotion === "thinking" ? "bg-yellow-400/10 text-yellow-400" :
+                  emotion === "serious" ? "bg-orange-400/10 text-orange-400" :
+                  emotion === "confused" ? "bg-purple-400/10 text-purple-400" :
+                  "bg-[var(--accent)]/10 text-[var(--accent)]"}
+              `}>
+                {emotion === "happy" ? "\u2713" :
+                 emotion === "thinking" ? "?" :
+                 emotion === "serious" ? "!" :
+                 emotion === "confused" ? "~" : "\u2022"}
+              </div>
+              <div>
+                <div className="text-[10px] tracking-[2px] uppercase text-[var(--foreground)] opacity-60">
+                  {emotion.toUpperCase()}
+                </div>
+                <div className="text-[8px] tracking-[1px] opacity-25">
+                  EMOTION VECTOR
+                </div>
+              </div>
+            </div>
+          </HudPanel>
+
+          {/* TTS Status */}
+          <HudPanel title="AUDIO SYSTEM">
+            <div className="p-3">
+              <div className="flex items-center gap-2 mb-2">
+                <span className={`w-1.5 h-1.5 rounded-full ${ttsAvailable ? "bg-green-400" : "bg-red-400/50"}`} />
+                <span className="text-[9px] tracking-[2px] uppercase opacity-50">
+                  {ttsAvailable ? "ORPHEUS TTS ONLINE" : "TTS OFFLINE"}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className={`w-1.5 h-1.5 rounded-full ${recognitionRef.current ? "bg-green-400" : "bg-red-400/50"}`} />
+                <span className="text-[9px] tracking-[2px] uppercase opacity-50">
+                  WEB SPEECH API
+                </span>
+              </div>
+            </div>
+          </HudPanel>
+        </aside>
+
+        {/* ──── CENTER: 3D Face ──── */}
+        <div className="flex-1 relative flex flex-col min-w-0">
+          {/* Face area */}
+          <div
+            className="flex-1 relative cursor-pointer min-h-0"
+            onClick={handleVoiceToggle}
+          >
+            {/* Arc reactor decoration */}
+            <ArcReactorRing />
+
+            {/* 3D Face */}
+            <JarvisScene
+              emotion={emotion}
+              speaking={state === "speaking"}
+              thinking={state === "thinking"}
+            />
+
+            {/* Listening overlay */}
+            {state === "listening" && (
+              <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-10">
+                <div className="text-red-400 text-[10px] tracking-[4px] uppercase state-listening flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-red-400 animate-ping" />
+                  LISTENING &mdash; CLICK TO STOP
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* ──── BOTTOM: Output + Chat + Input ──── */}
+          <div className="flex-shrink-0 px-6 pb-4 pt-2 z-10 relative">
+            <HudLine className="mb-3" />
+
+            {/* Current response */}
+            <div className="text-center mb-3">
+              <p className="text-sm leading-relaxed opacity-75 max-w-xl mx-auto data-flicker">
+                {output}
+              </p>
+            </div>
+
+            {/* Chat history toggle */}
+            {history.length > 0 && (
+              <div className="mb-3">
+                <button
+                  onClick={() => setChatOpen((o) => !o)}
+                  className="text-[8px] tracking-[2px] uppercase text-[var(--accent)] opacity-30 hover:opacity-60 transition-opacity cursor-pointer mx-auto block mb-2"
+                >
+                  {chatOpen ? "HIDE HISTORY" : `SHOW HISTORY (${history.length})`}
+                </button>
+                {chatOpen && (
+                  <div className="max-w-xl mx-auto">
+                    <HudPanel className="mb-2">
+                      <div className="p-2">
+                        <ChatHistory history={history} />
+                        <div ref={historyEndRef} />
+                      </div>
+                    </HudPanel>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Hint */}
+            <p className="text-[8px] text-white/15 tracking-[2px] text-center mb-2 uppercase">
+              Click face for voice &middot; Type below for text
+            </p>
+
+            {/* Input bar */}
+            <div className="max-w-xl mx-auto">
+              <InputBar
+                onSend={handleSend}
+                disabled={isProcessing}
+                listening={state === "listening"}
+                onVoiceToggle={handleVoiceToggle}
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* ──── RIGHT PANEL ──── */}
+        <aside className="w-[280px] flex-shrink-0 flex flex-col gap-3 p-3 overflow-y-auto scrollbar-hud z-10">
+          <TimersWidget />
+          <SystemLog />
+
+          {/* Quick Status Cards */}
+          <HudPanel title="SYSTEM STATUS">
+            <div className="p-3 space-y-2.5">
+              <div className="flex justify-between items-center">
+                <span className="text-[9px] tracking-[2px] uppercase opacity-40">BRAIN</span>
+                <BrainIndicator brain={brain} />
+              </div>
+              <div className="hud-divider" />
+              <div className="flex justify-between items-center">
+                <span className="text-[9px] tracking-[2px] uppercase opacity-40">STATE</span>
+                <StateIndicator state={state} pendingApprovals={0} />
+              </div>
+              <div className="hud-divider" />
+              <div className="flex justify-between items-center">
+                <span className="text-[9px] tracking-[2px] uppercase opacity-40">EMOTION</span>
+                <span className="text-[10px] tracking-[2px] uppercase text-[var(--accent)] opacity-60">
+                  {emotion}
+                </span>
+              </div>
+              <div className="hud-divider" />
+              <div className="flex justify-between items-center">
+                <span className="text-[9px] tracking-[2px] uppercase opacity-40">MESSAGES</span>
+                <span className="text-[10px] tabular-nums text-[var(--accent)] opacity-60">
+                  {history.length}
+                </span>
+              </div>
+            </div>
+          </HudPanel>
+
+          {/* Connection Status */}
+          <HudPanel title="CONNECTIONS">
+            <div className="p-3 space-y-2">
+              {[
+                { name: "NEXT.JS SERVER", status: true },
+                { name: "BRIDGE (4000)", status: true },
+                { name: "OLLAMA (7900)", status: brain.startsWith("ollama") },
+                { name: "TTS ENGINE", status: ttsAvailable },
+              ].map((conn) => (
+                <div key={conn.name} className="flex items-center gap-2">
+                  <span className={`w-1 h-1 rounded-full ${conn.status ? "bg-green-400" : "bg-white/15"}`} />
+                  <span className={`text-[9px] tracking-[2px] uppercase ${conn.status ? "opacity-50" : "opacity-20"}`}>
+                    {conn.name}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </HudPanel>
+
+          {/* Decorative data overlay */}
+          <div className="flex-1" />
+          <div className="text-[7px] tracking-[1px] opacity-10 font-mono px-2 pb-2 leading-relaxed data-flicker">
+            SYS.KERNEL.V4.2.1<br />
+            MEM.ALLOC.OK<br />
+            NET.BRIDGE.ACTIVE<br />
+            VAULT.SYNC.NOMINAL<br />
+            SEC.CLEARANCE.ALPHA
+          </div>
+        </aside>
       </div>
 
-      {/* Bottom panel — output + history + input */}
-      <div className="w-full max-w-2xl px-6 pb-6 pt-2 flex flex-col gap-3 shrink-0">
-        {/* Current output */}
-        <p className="text-center text-base leading-relaxed opacity-80 min-h-[28px]">
-          {output}
-        </p>
-
-        {/* Chat history */}
-        <ChatHistory history={history} />
-        <div ref={historyEndRef} />
-
-        {/* Hint */}
-        <p className="text-[10px] text-white/15 tracking-wider text-center">
-          Click face for voice &middot; Type below for text
-        </p>
-
-        {/* Input */}
-        <InputBar
-          onSend={handleSend}
-          disabled={state === "thinking" || state === "speaking"}
-        />
-      </div>
+      {/* ════════════ Edge decorations ════════════ */}
+      {/* Top-left corner bracket */}
+      <div className="absolute top-1 left-1 w-4 h-4 border-t border-l border-[var(--accent)] opacity-15 z-30 pointer-events-none" />
+      {/* Top-right corner bracket */}
+      <div className="absolute top-1 right-1 w-4 h-4 border-t border-r border-[var(--accent)] opacity-15 z-30 pointer-events-none" />
+      {/* Bottom-left corner bracket */}
+      <div className="absolute bottom-1 left-1 w-4 h-4 border-b border-l border-[var(--accent)] opacity-15 z-30 pointer-events-none" />
+      {/* Bottom-right corner bracket */}
+      <div className="absolute bottom-1 right-1 w-4 h-4 border-b border-r border-[var(--accent)] opacity-15 z-30 pointer-events-none" />
+      <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </main>
   );
 }

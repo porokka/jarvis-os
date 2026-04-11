@@ -16,26 +16,59 @@ Usage: python scripts/server.py [--port 4000]
 import http.server
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 from urllib.parse import urlparse
 
-JARVIS_DIR = Path(__file__).resolve().parent.parent
+BRIDGE_DIR = Path("/tmp/jarvis")
+VAULT_DIR = Path("/mnt/d/Jarvis_vault") if os.name != "nt" else Path("D:/Jarvis_vault")
+SCRIPTS_DIR = Path(__file__).resolve().parent
 PORT = int(sys.argv[sys.argv.index("--port") + 1]) if "--port" in sys.argv else 4000
 
 
 def read_file(name: str) -> str:
-    path = JARVIS_DIR / name
+    path = BRIDGE_DIR / name
     return path.read_text(encoding="utf-8").strip() if path.exists() else ""
 
 
 def write_file(name: str, content: str):
-    (JARVIS_DIR / name).write_text(content, encoding="utf-8")
+    BRIDGE_DIR.mkdir(parents=True, exist_ok=True)
+    (BRIDGE_DIR / name).write_text(content, encoding="utf-8")
+
+
+def get_gpu_stats() -> list:
+    try:
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=name,temperature.gpu,utilization.gpu,memory.used,memory.total,power.draw,power.limit,fan.speed,clocks.gr,clocks.mem",
+             "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=5,
+        )
+        gpus = []
+        for line in result.stdout.strip().split("\n"):
+            if not line.strip():
+                continue
+            parts = [p.strip() for p in line.split(",")]
+            gpus.append({
+                "name": parts[0],
+                "temp": int(parts[1]),
+                "utilization": int(parts[2]),
+                "memUsed": int(parts[3]),
+                "memTotal": int(parts[4]),
+                "power": float(parts[5]),
+                "powerLimit": float(parts[6]),
+                "fan": int(parts[7]) if parts[7] != "[N/A]" else None,
+                "clockCore": int(parts[8]),
+                "clockMem": int(parts[9]),
+            })
+        return gpus
+    except Exception:
+        return []
 
 
 class JarvisHandler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, directory=str(JARVIS_DIR / "scripts"), **kwargs)
+        super().__init__(*args, directory=str(SCRIPTS_DIR), **kwargs)
 
     def do_GET(self):
         path = urlparse(self.path).path
@@ -50,6 +83,7 @@ class JarvisHandler(http.server.SimpleHTTPRequestHandler):
                 "emotion": read_file("emotion.txt") or "neutral",
                 "lastOutput": read_file("output.txt"),
                 "lastInput": read_file("last_input.txt"),
+                "brain": read_file("brain.txt") or "—",
             }
             self._json_response(data)
             return
@@ -58,10 +92,52 @@ class JarvisHandler(http.server.SimpleHTTPRequestHandler):
             self._json_response({"output": read_file("output.txt")})
             return
 
+        if path == "/api/gpu":
+            self._json_response({"gpus": get_gpu_stats()})
+            return
+
+        if path == "/api/logs":
+            try:
+                log_path = VAULT_DIR / "jarvis.log"
+                if log_path.exists():
+                    lines = log_path.read_text(encoding="utf-8", errors="replace").strip().split("\n")
+                    self._json_response({"lines": lines[-50:]})
+                else:
+                    self._json_response({"lines": []})
+            except:
+                self._json_response({"lines": []})
+            return
+
         return super().do_GET()
 
     def do_POST(self):
         path = urlparse(self.path).path
+
+        if path == "/api/settings":
+            length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(length).decode("utf-8")
+            try:
+                data = json.loads(body)
+            except json.JSONDecodeError:
+                data = {}
+            if "voice" in data:
+                write_file("settings_voice.txt", data["voice"])
+            if "personality" in data:
+                write_file("settings_personality.txt", data["personality"])
+            self._json_response({"status": "ok"})
+            return
+
+        if path == "/api/state-override":
+            length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(length).decode("utf-8")
+            try:
+                data = json.loads(body)
+                if "state" in data:
+                    write_file("state.txt", data["state"])
+            except:
+                pass
+            self._json_response({"status": "ok"})
+            return
 
         if path == "/api/input":
             length = int(self.headers.get("Content-Length", 0))
@@ -72,9 +148,11 @@ class JarvisHandler(http.server.SimpleHTTPRequestHandler):
             except json.JSONDecodeError:
                 text = body.strip()
 
-            if text:
+            if text and not text.startswith("__"):
                 write_file("input.txt", text)
                 self._json_response({"status": "ok", "input": text})
+            elif text.startswith("__"):
+                self._json_response({"status": "ok", "internal": True})
             else:
                 self._json_response({"status": "error", "message": "Empty input"}, 400)
             return
@@ -106,7 +184,8 @@ class JarvisHandler(http.server.SimpleHTTPRequestHandler):
 if __name__ == "__main__":
     server = http.server.HTTPServer(("127.0.0.1", PORT), JarvisHandler)
     print(f"[JARVIS] HTTP server on http://localhost:{PORT}")
-    print(f"[JARVIS] Serving from {JARVIS_DIR / 'scripts'}")
+    print(f"[JARVIS] Serving HTML from {SCRIPTS_DIR}")
+    print(f"[JARVIS] Bridge files at {BRIDGE_DIR}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

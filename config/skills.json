@@ -1,0 +1,14 @@
+{
+  "enabled": {
+    "denon": true,
+    "shield": true,
+    "radio": true,
+    "volume": true,
+    "timer": true,
+    "memory": true,
+    "vault": true,
+    "web": true,
+    "shell": true,
+    "claude_skills": true
+  }
+}

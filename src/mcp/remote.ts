@@ -16,7 +16,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { IncomingMessage, ServerResponse } from "node:http";
-import { createServer } from "node:https";
+import { createServer as createHttpsServer } from "node:https";
 import { readFileSync as readCert } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
@@ -37,12 +37,13 @@ import { glob } from "node:fs/promises";
 const execAsync = promisify(exec);
 
 // --- Config ---
+const JARVIS_ROOT = resolve(import.meta.dirname, "../..");
 const PORT = parseInt(process.env.JARVIS_PORT || "3100");
 const AUTH_TOKEN = process.env.JARVIS_TOKEN || "";
-const VAULT_DIR = process.env.JARVIS_VAULT || "D:/Jarvis_vault";
-const CODE_DIR = process.env.JARVIS_CODE || "D:/coding";
-const BRIDGE_DIR = process.env.JARVIS_BRIDGE || "D:/coding/operation-jarvis/bridge";
-const ALLOWED_ROOTS = [VAULT_DIR, CODE_DIR, "D:/coding/operation-jarvis"];
+const VAULT_DIR = process.env.JARVIS_VAULT || join(JARVIS_ROOT, "vault");
+const CODE_DIR = process.env.JARVIS_CODE || join(JARVIS_ROOT, "..");
+const BRIDGE_DIR = process.env.JARVIS_BRIDGE || join(JARVIS_ROOT, "bridge");
+const ALLOWED_ROOTS = [VAULT_DIR, CODE_DIR, JARVIS_ROOT];
 
 // --- Helpers ---
 function safePath(requestedPath: string): string {
@@ -60,7 +61,7 @@ function safePath(requestedPath: string): string {
 
 function log(msg: string) {
   const ts = new Date().toISOString();
-  const logPath = join(BRIDGE_DIR, "../jarvis-remote.log");
+  const logPath = join(JARVIS_ROOT, "jarvis-remote.log");
   appendFileSync(logPath, `[${ts}] ${msg}\n`);
 }
 
@@ -240,7 +241,8 @@ async function withApproval<T>(
   return execute();
 }
 
-// --- Server ---
+// --- Server Factory ---
+function createServer(): McpServer {
 const server = new McpServer({
   name: "jarvis-remote",
   version: "0.2.0",
@@ -786,13 +788,17 @@ server.tool(
       .describe("Voice name (am_michael, af_bella, etc.)"),
   },
   async ({ text, voice }) => {
+    const venvPython = join(JARVIS_ROOT, "venv/Scripts/python.exe");
+    const modelPath = join(JARVIS_ROOT, "tts/models/kokoro/onnx/model_quantized.onnx");
+    const voicesPath = join(JARVIS_ROOT, "tts/models/kokoro/voices.npz");
+    const wavPath = join(BRIDGE_DIR, "speech.wav");
     const { stdout, stderr, code } = await shell(
-      `d:/coding/operation-jarvis/venv/Scripts/python.exe -c "
+      `${venvPython} -c "
 from kokoro_onnx import Kokoro
 import soundfile as sf
-kokoro = Kokoro('d:/coding/operation-jarvis/tts/models/kokoro/onnx/model_quantized.onnx', 'd:/coding/operation-jarvis/tts/models/kokoro/voices.npz')
+kokoro = Kokoro('${modelPath.replace(/\\/g, "/")}', '${voicesPath.replace(/\\/g, "/")}')
 samples, sr = kokoro.create('${text.replace(/'/g, "\\'")}', voice='${voice}')
-sf.write('d:/coding/operation-jarvis/bridge/speech.wav', samples, sr)
+sf.write('${wavPath.replace(/\\/g, "/")}', samples, sr)
 print(f'{len(samples)/sr:.1f}s audio generated')
 "`,
       undefined,
@@ -828,9 +834,12 @@ server.tool(
   }
 );
 
+return server;
+}
+
 // ==================== HTTP SERVER ====================
 
-const sessions = new Map<string, StreamableHTTPServerTransport>();
+const sessions = new Map<string, { transport: StreamableHTTPServerTransport; server: McpServer }>();
 
 function checkAuth(req: IncomingMessage): boolean {
   if (!AUTH_TOKEN) return true; // No auth configured
@@ -838,7 +847,7 @@ function checkAuth(req: IncomingMessage): boolean {
   return authHeader === `Bearer ${AUTH_TOKEN}`;
 }
 
-const CERT_DIR = "D:/coding/operation-jarvis/certs";
+const CERT_DIR = process.env.JARVIS_CERT_DIR || join(JARVIS_ROOT, "certs");
 const httpsOptions = {
   key: readCert(join(CERT_DIR, "jarvis.key")),
   cert: readCert(join(CERT_DIR, "jarvis.crt")),
@@ -854,7 +863,7 @@ function readBody(req: IncomingMessage): Promise<string> {
   });
 }
 
-const httpServer = createServer(httpsOptions, async (req: IncomingMessage, res: ServerResponse) => {
+const httpServer = createHttpsServer(httpsOptions, async (req: IncomingMessage, res: ServerResponse) => {
   const url = new URL(req.url!, `https://${req.headers.host}`);
 
   // CORS for browser clients
@@ -942,32 +951,36 @@ const httpServer = createServer(httpsOptions, async (req: IncomingMessage, res: 
     const sessionId = req.headers["mcp-session-id"] as string | undefined;
 
     if (sessionId && sessions.has(sessionId)) {
-      await sessions.get(sessionId)!.handleRequest(req, res);
+      await sessions.get(sessionId)!.transport.handleRequest(req, res);
     } else {
-      // New session
+      // New session — each session gets its own McpServer instance
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID(),
       });
-      await server.connect(transport);
-      sessions.set(transport.sessionId!, transport);
-      transport.onclose = () => {
-        sessions.delete(transport.sessionId!);
-        log(`Session closed: ${transport.sessionId}`);
-      };
-      log(`New session: ${transport.sessionId}`);
+      const sessionServer = createServer();
+      await sessionServer.connect(transport);
+      // handleRequest first so initialize sets the sessionId
       await transport.handleRequest(req, res);
+      if (transport.sessionId) {
+        sessions.set(transport.sessionId, { transport, server: sessionServer });
+        transport.onclose = () => {
+          sessions.delete(transport.sessionId!);
+          log(`Session closed: ${transport.sessionId}`);
+        };
+        log(`New session: ${transport.sessionId}`);
+      }
     }
   } else if (req.method === "GET") {
     const sessionId = req.headers["mcp-session-id"] as string | undefined;
     if (sessionId && sessions.has(sessionId)) {
-      await sessions.get(sessionId)!.handleRequest(req, res);
+      await sessions.get(sessionId)!.transport.handleRequest(req, res);
     } else {
       res.writeHead(400).end("No session");
     }
   } else if (req.method === "DELETE") {
     const sessionId = req.headers["mcp-session-id"] as string | undefined;
     if (sessionId && sessions.has(sessionId)) {
-      await sessions.get(sessionId)!.handleRequest(req, res);
+      await sessions.get(sessionId)!.transport.handleRequest(req, res);
       sessions.delete(sessionId);
     }
     res.writeHead(200).end();

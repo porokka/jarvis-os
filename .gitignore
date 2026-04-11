@@ -28,3 +28,21 @@ certs/
 # Env
 .env
 .env.local
+
+# Runtime state files
+input.txt
+output.txt
+state.txt
+brain.txt
+emotion.txt
+last_input.txt
+conversation.md
+settings_*.txt
+entities.json
+mempalace.yaml
+*.log
+bridge/
+
+# Next.js
+.next/
+app/.next/

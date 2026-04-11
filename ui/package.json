@@ -1,0 +1,20 @@
+{
+  "name": "jarvis-os-ui",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -p 3000 -H 0.0.0.0 --experimental-https --experimental-https-key ../certs/jarvis.key --experimental-https-cert ../certs/jarvis.crt",
+    "build": "next build",
+    "start": "next start -p 3000 -H 0.0.0.0 --experimental-https --experimental-https-key ../certs/jarvis.key --experimental-https-cert ../certs/jarvis.crt"
+  },
+  "dependencies": {
+    "next": "^16.2.2",
+    "react": "^18",
+    "react-dom": "^18"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@types/react": "^18",
+    "typescript": "^5"
+  }
+}

@@ -1,0 +1,163 @@
+{
+  "name": "Denon AVR-X4100W",
+  "ip": "192.168.0.188",
+  "room": "livingroom",
+
+  "inputs": {
+    "CBL/SAT": {
+      "command": "SISAT/CBL",
+      "description": "Cable/Satellite box",
+      "device": null
+    },
+    "DVD": {
+      "command": "SIDVD",
+      "description": "DVD/Blu-ray player",
+      "device": null
+    },
+    "Blu-ray": {
+      "command": "SIBD",
+      "description": "Blu-ray player",
+      "device": null
+    },
+    "Game": {
+      "command": "SIGAME",
+      "description": "PC / Gaming — RTX 3090 HDMI output",
+      "device": "pc",
+      "aliases": ["pc", "computer", "monitor", "game", "gaming"]
+    },
+    "Media Player": {
+      "command": "SIMPLAY",
+      "description": "NVIDIA Shield Pro — streaming/apps",
+      "device": "shield",
+      "aliases": ["shield", "mediaplayer", "multimedia", "streaming"]
+    },
+    "AUX1": {
+      "command": "SIAUX1",
+      "description": "Auxiliary input 1",
+      "device": null
+    },
+    "AUX2": {
+      "command": "SIAUX2",
+      "description": "Auxiliary input 2",
+      "device": null
+    },
+    "Phono": {
+      "command": "SIPHONO",
+      "description": "Vinyl turntable — direct analog audio",
+      "device": "vinyl",
+      "aliases": ["vinyl", "turntable", "record", "records", "phono"]
+    },
+    "Tuner": {
+      "command": "SITUNER",
+      "description": "FM/AM radio tuner",
+      "device": null,
+      "aliases": ["tuner", "fm", "am", "radio tuner"]
+    },
+    "TV Audio": {
+      "command": "SITV",
+      "description": "TV audio return (ARC)",
+      "device": "tv",
+      "aliases": ["tv", "tv audio", "arc"]
+    },
+    "Bluetooth": {
+      "command": "SIBT",
+      "description": "Bluetooth audio input",
+      "device": null,
+      "aliases": ["bluetooth", "bt", "phone"]
+    },
+    "Network": {
+      "command": "SINET",
+      "description": "Network streaming (Spotify Connect, AirPlay, etc.)",
+      "device": null,
+      "aliases": ["network", "airplay", "spotify connect", "stream"]
+    },
+    "USB": {
+      "command": "SIUSB/IPOD",
+      "description": "USB audio playback",
+      "device": null,
+      "aliases": ["usb"]
+    }
+  },
+
+  "volume": {
+    "min": -80,
+    "max": 18,
+    "step": 0.5,
+    "commands": {
+      "up": "MVUP",
+      "down": "MVDOWN",
+      "mute_on": "MUON",
+      "mute_off": "MUOFF",
+      "set": "MV{level}"
+    }
+  },
+
+  "power": {
+    "on": "PWON",
+    "off": "PWSTANDBY",
+    "status": "PW?"
+  },
+
+  "zones": {
+    "zone1": {
+      "description": "Living room speakers — 5.1 surround",
+      "power_on": "ZMON",
+      "power_off": "ZMOFF",
+      "volume_up": "MVUP",
+      "volume_down": "MVDOWN",
+      "mute_on": "MUON",
+      "mute_off": "MUOFF"
+    },
+    "zone2": {
+      "description": "Wireless headset",
+      "power_on": "Z2ON",
+      "power_off": "Z2OFF",
+      "volume_up": "Z2UP",
+      "volume_down": "Z2DOWN",
+      "mute_on": "Z2MUON",
+      "mute_off": "Z2MUOFF",
+      "input": "Z2{input}"
+    }
+  },
+
+  "presets": {
+    "headphones": {
+      "description": "Switch to headset — mute speakers, enable zone 2",
+      "commands": ["MUON", "Z2ON"]
+    },
+    "speakers": {
+      "description": "Switch to speakers — unmute zone 1, disable zone 2",
+      "commands": ["MUOFF", "Z2OFF"]
+    },
+    "both": {
+      "description": "Both speakers and headset",
+      "commands": ["MUOFF", "Z2ON"]
+    },
+    "quiet": {
+      "description": "All quiet — mute everything",
+      "commands": ["MUON", "Z2OFF"]
+    },
+    "night": {
+      "description": "Headset only, quiet mode for late night",
+      "commands": ["MUON", "Z2ON"]
+    }
+  },
+
+  "eco": {
+    "on": "ECON",
+    "off": "ECOFF",
+    "auto": "ECAUTO"
+  },
+
+  "surround": {
+    "auto": "MSAUTO",
+    "stereo": "MSSTEREO",
+    "dolby": "MSDOLBY SURROUND",
+    "dts": "MSDTS SURROUND",
+    "movie": "MSMOVIE",
+    "music": "MSMUSIC",
+    "game": "MSGAME",
+    "direct": "MSDIRECT",
+    "pure_direct": "MSPURE DIRECT"
+  }
+}

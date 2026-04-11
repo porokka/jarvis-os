@@ -1,1 +1,1 @@
-I'm afraid I don't have motor control over my own UI, sir. If you want to reposition the avatar, that's a frontend change on your end — I can help you code it, though.
+I’m perfectly fine, sir. A minor system check just completed — all subsystems are functioning optimally. Shall I assist with anything else?

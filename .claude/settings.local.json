@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/Users/Sami Porokka/.claude/projects/c--Users-Sami-Porokka-jarvis-os/memory/**)",
+      "Bash(bash scripts/gen-cert.sh)",
+      "Bash(openssl x509:*)",
+      "Bash(taskkill //F //IM node.exe)",
+      "Bash(taskkill //F //IM python.exe)",
+      "Bash(python server.py)",
+      "Bash(python system_api.py)",
+      "Bash(npm run:*)",
+      "Bash(wsl bash:*)",
+      "Bash(mkdir -p /tmp/jarvis-backup)",
+      "Bash(cp scripts/server.py scripts/system_api.py scripts/gen-cert.sh scripts/jarvis_browser.html ui/JarvisOS.jsx ui/package.json ui/next.config.js /tmp/jarvis-backup/)",
+      "Bash(npm install:*)",
+      "Bash(mkdir -p \"d:/coding\")",
+      "Bash(mv \"c:/Users/Sami Porokka/jarvis-os\" \"d:/coding/jarvis-os\")",
+      "Bash(rm -rf \"d:/coding/jarvis-os\")",
+      "Bash(cmd.exe //c \"robocopy \\\\\"C:\\\\\\\\Users\\\\\\\\Sami Porokka\\\\\\\\jarvis-os\\\\\" \\\\\"D:\\\\\\\\coding\\\\\\\\jarvis-os\\\\\" /E /MOVE /NFL /NDL /NJH /NJS /R:1 /W:0\")",
+      "Bash(echo \"exit: $?\")",
+      "Bash(/c/Windows/System32/xcopy.exe \"C:\\\\\\\\Users\\\\\\\\Sami Porokka\\\\\\\\jarvis-os\" \"D:\\\\\\\\coding\\\\\\\\jarvis-os\\\\\\\\\" //E //I //H //Q //Y)"
+    ]
+  }
+}

@@ -10,7 +10,8 @@ interface ApprovalRequest {
   createdAt?: number;
 }
 
-const JARVIS_URL = process.env.NEXT_PUBLIC_JARVIS_URL || "https://localhost:3100";
+// Use Next.js API proxy to avoid self-signed cert issues in browser
+const JARVIS_URL = "";
 
 const TOOL_ICONS: Record<string, string> = {
   shell_exec: "terminal",
@@ -44,7 +45,7 @@ export function ApprovalPanel({
   // Connect to SSE stream for real-time approval requests
   useEffect(() => {
     const connect = () => {
-      const es = new EventSource(`${JARVIS_URL}/approvals/stream`);
+      const es = new EventSource(`/api/approvals/stream`);
 
       es.addEventListener("approval_request", (e) => {
         const req: ApprovalRequest = JSON.parse(e.data);
@@ -76,7 +77,7 @@ export function ApprovalPanel({
     connect();
 
     // Also fetch any existing pending approvals
-    fetch(`${JARVIS_URL}/approvals`)
+    fetch(`/api/approvals`)
       .then((r) => r.json())
       .then((pending: ApprovalRequest[]) => {
         if (Array.isArray(pending) && pending.length > 0) {
@@ -98,10 +99,10 @@ export function ApprovalPanel({
   const resolve = useCallback(async (id: string, approved: boolean) => {
     setResolving((prev) => new Set(prev).add(id));
     try {
-      await fetch(`${JARVIS_URL}/approvals/${id}`, {
+      await fetch(`/api/approvals`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ approved }),
+        body: JSON.stringify({ id, approved }),
       });
       setRequests((prev) => prev.filter((r) => r.id !== id));
     } catch {

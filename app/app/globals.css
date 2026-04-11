@@ -2,11 +2,17 @@
 
 :root {
   --background: #06060b;
-  --foreground: #e0e0e0;
+  --foreground: #c8d8e8;
   --accent: #40a0f0;
-  --accent-dim: rgba(64, 160, 240, 0.15);
+  --accent-bright: #60c0ff;
+  --accent-dim: rgba(64, 160, 240, 0.12);
+  --accent-glow: rgba(64, 160, 240, 0.35);
   --danger: #f03c3c;
   --warning: #f0c040;
+  --success: #40f080;
+  --panel-bg: rgba(6, 10, 20, 0.65);
+  --panel-border: rgba(64, 160, 240, 0.18);
+  --grid-color: rgba(64, 160, 240, 0.04);
 }
 
 @theme inline {
@@ -16,13 +22,294 @@
   --font-mono: var(--font-geist-mono);
 }
 
+/* ─── Base ─── */
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-mono), 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+  overflow: hidden;
 }
 
-/* Orb animations */
+/* ─── HUD Grid Background ─── */
+.hud-grid {
+  background-image:
+    linear-gradient(var(--grid-color) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-color) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+/* ─── Scan Lines Overlay ─── */
+.scan-lines::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0, 0, 0, 0.03) 2px,
+    rgba(0, 0, 0, 0.03) 4px
+  );
+  mix-blend-mode: multiply;
+}
+
+/* ─── HUD Panel ─── */
+.hud-panel {
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  backdrop-filter: blur(12px);
+  position: relative;
+}
+
+.hud-panel::before,
+.hud-panel::after {
+  content: '';
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border-color: var(--accent);
+  pointer-events: none;
+  opacity: 0.5;
+}
+
+.hud-panel::before {
+  top: -1px;
+  left: -1px;
+  border-top: 2px solid;
+  border-left: 2px solid;
+}
+
+.hud-panel::after {
+  bottom: -1px;
+  right: -1px;
+  border-bottom: 2px solid;
+  border-right: 2px solid;
+}
+
+/* Additional corners via child pseudo-elements */
+.hud-panel-corners::before {
+  content: '';
+  position: absolute;
+  top: -1px;
+  right: -1px;
+  width: 12px;
+  height: 12px;
+  border-top: 2px solid var(--accent);
+  border-right: 2px solid var(--accent);
+  pointer-events: none;
+  opacity: 0.5;
+}
+
+.hud-panel-corners::after {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  left: -1px;
+  width: 12px;
+  height: 12px;
+  border-bottom: 2px solid var(--accent);
+  border-left: 2px solid var(--accent);
+  pointer-events: none;
+  opacity: 0.5;
+}
+
+/* ─── Panel Title Bar ─── */
+.hud-title {
+  font-size: 9px;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  color: var(--accent);
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--panel-border);
+  position: relative;
+  overflow: hidden;
+}
+
+.hud-title::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(64, 160, 240, 0.06), transparent);
+  animation: title-scan 4s ease-in-out infinite;
+}
+
+@keyframes title-scan {
+  0%, 100% { left: -100%; }
+  50% { left: 100%; }
+}
+
+/* ─── Glow Effects ─── */
+.glow-text {
+  text-shadow: 0 0 8px var(--accent-glow), 0 0 20px rgba(64, 160, 240, 0.15);
+}
+
+.glow-border {
+  box-shadow: 0 0 8px rgba(64, 160, 240, 0.1), inset 0 0 8px rgba(64, 160, 240, 0.05);
+}
+
+.glow-strong {
+  box-shadow: 0 0 15px rgba(64, 160, 240, 0.2), 0 0 40px rgba(64, 160, 240, 0.08);
+}
+
+/* ─── State Pulse Animations ─── */
+@keyframes pulse-standby {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 0.7; }
+}
+
+@keyframes pulse-listening {
+  0%, 100% { opacity: 0.6; text-shadow: 0 0 8px rgba(240, 60, 60, 0.4); }
+  50% { opacity: 1; text-shadow: 0 0 16px rgba(240, 60, 60, 0.7); }
+}
+
+@keyframes pulse-thinking {
+  0%, 100% { opacity: 0.5; text-shadow: 0 0 8px rgba(240, 192, 64, 0.3); }
+  50% { opacity: 1; text-shadow: 0 0 16px rgba(240, 192, 64, 0.6); }
+}
+
+@keyframes pulse-speaking {
+  0%, 100% { opacity: 0.6; text-shadow: 0 0 8px rgba(64, 160, 240, 0.3); }
+  50% { opacity: 1; text-shadow: 0 0 16px rgba(64, 160, 240, 0.6); }
+}
+
+.state-standby { animation: pulse-standby 3s ease-in-out infinite; }
+.state-listening { animation: pulse-listening 1s ease-in-out infinite; }
+.state-thinking { animation: pulse-thinking 1.5s ease-in-out infinite; }
+.state-speaking { animation: pulse-speaking 2s ease-in-out infinite; }
+.state-asking { animation: pulse-listening 1.2s ease-in-out infinite; }
+
+/* ─── Arc Reactor Ring ─── */
+@keyframes reactor-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes reactor-pulse {
+  0%, 100% { opacity: 0.3; filter: drop-shadow(0 0 8px rgba(64, 160, 240, 0.3)); }
+  50% { opacity: 0.6; filter: drop-shadow(0 0 16px rgba(64, 160, 240, 0.5)); }
+}
+
+.reactor-ring {
+  animation: reactor-spin 20s linear infinite;
+}
+
+.reactor-pulse {
+  animation: reactor-pulse 3s ease-in-out infinite;
+}
+
+/* ─── Log Line Animations ─── */
+@keyframes log-fade-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.log-line {
+  animation: log-fade-in 0.3s ease-out;
+}
+
+/* ─── Holographic Bar ─── */
+.holo-bar {
+  background: linear-gradient(90deg,
+    rgba(64, 160, 240, 0.15),
+    rgba(64, 160, 240, 0.05)
+  );
+  border: 1px solid rgba(64, 160, 240, 0.15);
+  border-radius: 2px;
+  overflow: hidden;
+  position: relative;
+}
+
+.holo-bar-fill {
+  height: 100%;
+  transition: width 0.8s ease-out;
+  position: relative;
+}
+
+.holo-bar-fill::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: currentColor;
+  box-shadow: 0 0 6px currentColor;
+}
+
+/* ─── Hexagonal Accent Decoration ─── */
+.hex-accent {
+  clip-path: polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%);
+}
+
+/* ─── Scrollbar ─── */
+.scrollbar-hud::-webkit-scrollbar {
+  width: 3px;
+}
+
+.scrollbar-hud::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.scrollbar-hud::-webkit-scrollbar-thumb {
+  background: rgba(64, 160, 240, 0.2);
+  border-radius: 2px;
+}
+
+/* ─── Input Field Focus ─── */
+.hud-input:focus {
+  box-shadow: 0 0 12px rgba(64, 160, 240, 0.15), inset 0 0 6px rgba(64, 160, 240, 0.05);
+}
+
+/* ─── Approval Panel Slide ─── */
+@keyframes slide-in {
+  from { opacity: 0; transform: translateX(20px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+.animate-slide-in {
+  animation: slide-in 0.3s cubic-bezier(0.19, 1, 0.22, 1);
+}
+
+/* ─── Horizontal Divider Line ─── */
+.hud-divider {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--panel-border), transparent);
+}
+
+/* ─── Data Flicker ─── */
+@keyframes data-flicker {
+  0%, 97%, 100% { opacity: 1; }
+  98% { opacity: 0.6; }
+  99% { opacity: 0.85; }
+}
+
+.data-flicker {
+  animation: data-flicker 5s ease-in-out infinite;
+}
+
+/* ─── Corner Bracket Decorations ─── */
+.corner-brackets {
+  position: relative;
+}
+
+.corner-brackets::before {
+  content: '[ ';
+  color: var(--accent);
+  opacity: 0.4;
+}
+
+.corner-brackets::after {
+  content: ' ]';
+  color: var(--accent);
+  opacity: 0.4;
+}
+
+/* ─── Orb animations (preserved for face) ─── */
 @keyframes orb-idle {
   0%, 100% { box-shadow: 0 0 20px rgba(64, 160, 240, 0.1); }
   50% { box-shadow: 0 0 30px rgba(64, 160, 240, 0.2); }
@@ -44,12 +331,24 @@ body {
   50% { transform: scale(1.03); }
 }
 
-/* Approval panel */
-@keyframes slide-in {
-  from { opacity: 0; transform: translateX(20px); }
-  to { opacity: 1; transform: translateX(0); }
+/* ─── Marquee Sweep for HUD Lines ─── */
+@keyframes sweep-right {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(200%); }
 }
 
-.animate-slide-in {
-  animation: slide-in 0.3s cubic-bezier(0.19, 1, 0.22, 1);
+.hud-sweep {
+  position: relative;
+  overflow: hidden;
+}
+
+.hud-sweep::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 50%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(64, 160, 240, 0.04), transparent);
+  animation: sweep-right 8s linear infinite;
 }

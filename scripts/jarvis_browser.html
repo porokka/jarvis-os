@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>JARVIS</title>
+  <title>J.A.R.V.I.S</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -22,7 +22,7 @@
     #state-indicator {
       position: fixed;
       top: 24px;
-      right: 24px;
+      right: 350px;
       font-size: 12px;
       text-transform: uppercase;
       letter-spacing: 3px;
@@ -32,6 +32,70 @@
     #state-indicator.thinking { color: #f0c040; }
     #state-indicator.speaking { color: #40a0f0; }
     #state-indicator.standby { color: #40f060; }
+
+    #gpu-panel {
+      position: fixed;
+      top: 16px;
+      left: 16px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 10px;
+      padding: 14px 18px;
+      font-size: 11px;
+      line-height: 1.7;
+      min-width: 200px;
+      backdrop-filter: blur(8px);
+    }
+
+    #gpu-panel .gpu-title {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      opacity: 0.4;
+      margin-bottom: 8px;
+    }
+
+    #gpu-panel .gpu-name {
+      color: #40a0f0;
+      font-size: 12px;
+      margin-bottom: 6px;
+    }
+
+    #gpu-panel .gpu-row {
+      display: flex;
+      justify-content: space-between;
+      opacity: 0.7;
+    }
+
+    #gpu-panel .gpu-row .val {
+      color: #e0e0e0;
+      font-weight: 500;
+    }
+
+    .gpu-bar {
+      height: 3px;
+      background: rgba(255, 255, 255, 0.08);
+      border-radius: 2px;
+      margin: 4px 0 2px;
+      overflow: hidden;
+    }
+
+    .gpu-bar-fill {
+      height: 100%;
+      border-radius: 2px;
+      transition: width 0.5s ease;
+    }
+
+    .bar-temp .gpu-bar-fill { background: #f07040; }
+    .bar-util .gpu-bar-fill { background: #40f060; }
+    .bar-mem .gpu-bar-fill { background: #40a0f0; }
+    .bar-power .gpu-bar-fill { background: #f0c040; }
+
+    #gpu-panel .gpu-separator {
+      border: none;
+      border-top: 1px solid rgba(255, 255, 255, 0.06);
+      margin: 8px 0;
+    }
 
     .orb-container {
       position: relative;
@@ -138,9 +202,143 @@
       opacity: 0.3;
       letter-spacing: 1px;
     }
+
+    #log-panel {
+      position: fixed;
+      top: 16px;
+      right: 16px;
+      bottom: 80px;
+      width: 340px;
+      background: transparent;
+      padding: 12px;
+      font-size: 10px;
+      font-family: 'SF Mono', 'Cascadia Code', monospace;
+      overflow: hidden;
+      pointer-events: none;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+    }
+
+    #log-panel.expanded {
+      background: rgba(0, 8, 16, 0.7);
+      border: 1px solid rgba(64, 160, 240, 0.1);
+      border-radius: 10px;
+      overflow-y: auto;
+      pointer-events: auto;
+      backdrop-filter: blur(8px);
+    }
+
+    #log-panel .log-title {
+      font-size: 9px;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      opacity: 0.2;
+      margin-bottom: 8px;
+      cursor: pointer;
+      pointer-events: auto;
+    }
+    #log-panel .log-title:hover { opacity: 0.5; }
+
+    #log-panel .log-line {
+      line-height: 1.6;
+      opacity: 0.15;
+      word-break: break-all;
+      transition: opacity 0.3s;
+    }
+
+    /* Fade in recent lines — last 5 visible, rest ghost */
+    #log-panel .log-line:nth-last-child(-n+1) { opacity: 0.35; }
+    #log-panel .log-line:nth-last-child(-n+2) { opacity: 0.25; }
+    #log-panel .log-line:nth-last-child(-n+3) { opacity: 0.18; }
+    #log-panel .log-line:nth-last-child(-n+4) { opacity: 0.12; }
+    #log-panel .log-line:nth-last-child(-n+5) { opacity: 0.08; }
+
+    /* When expanded, show all clearly */
+    #log-panel.expanded .log-line { opacity: 0.5; }
+    #log-panel.expanded .log-line.heard { opacity: 0.8; }
+    #log-panel.expanded .log-line.said { opacity: 0.9; }
+
+    /* Color coding — subtle holographic feel */
+    #log-panel .log-line.heard { color: #40f060; }
+    #log-panel .log-line.said { color: #40a0f0; }
+    #log-panel .log-line.route { color: #f0c040; }
+    #log-panel .log-line.tool { color: #c060f0; }
+    #log-panel .log-line.wake { color: #f07040; }
+    #log-panel .log-line.error { color: #f04040; }
+    #log-panel .log-line.ready { color: #304050; }
+
+    #settings-toggle {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 8px;
+      padding: 8px 12px;
+      color: rgba(255, 255, 255, 0.4);
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 12px;
+    }
+    #settings-toggle:hover { color: rgba(255, 255, 255, 0.7); border-color: rgba(255, 255, 255, 0.2); }
+
+    #settings-panel {
+      display: none;
+      position: fixed;
+      bottom: 60px;
+      right: 24px;
+      background: rgba(15, 15, 20, 0.95);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 10px;
+      padding: 16px 20px;
+      min-width: 220px;
+      backdrop-filter: blur(12px);
+    }
+    #settings-panel.open { display: block; }
+    #settings-panel label {
+      display: block;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      opacity: 0.4;
+      margin-bottom: 6px;
+      margin-top: 12px;
+    }
+    #settings-panel label:first-child { margin-top: 0; }
+    #settings-panel select {
+      width: 100%;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 6px;
+      padding: 8px 10px;
+      color: #e0e0e0;
+      font-family: inherit;
+      font-size: 13px;
+      outline: none;
+      cursor: pointer;
+    }
+    #settings-panel select:focus { border-color: rgba(64, 160, 240, 0.5); }
+    #settings-panel .brain-info {
+      margin-top: 14px;
+      padding-top: 10px;
+      border-top: 1px solid rgba(255, 255, 255, 0.06);
+      font-size: 11px;
+      opacity: 0.5;
+    }
   </style>
 </head>
 <body>
+  <div id="gpu-panel">
+    <div class="gpu-title">GPU</div>
+    <div id="gpu-stats">Connecting...</div>
+  </div>
+
+  <div id="log-panel">
+    <div class="log-title" id="log-toggle">System Log</div>
+    <div id="log-lines"></div>
+  </div>
+
   <div id="state-indicator" class="standby">STANDBY</div>
 
   <div class="orb-container">
@@ -154,6 +352,29 @@
   <div id="input-bar">
     <input type="text" id="text-input" placeholder="Talk to JARVIS..." autocomplete="off" />
     <button id="send-btn">Send</button>
+  </div>
+
+  <button id="settings-toggle">Settings</button>
+  <div id="settings-panel">
+    <label>Voice</label>
+    <select id="voice-select">
+      <option value="tara">Tara (default)</option>
+      <option value="leah">Leah</option>
+      <option value="jess">Jess</option>
+      <option value="leo">Leo</option>
+      <option value="dan">Dan</option>
+      <option value="mia">Mia</option>
+      <option value="zac">Zac</option>
+      <option value="zoe">Zoe</option>
+    </select>
+    <label>Personality</label>
+    <select id="personality-select">
+      <option value="jarvis">JARVIS (British butler)</option>
+      <option value="friday">FRIDAY (Casual, friendly)</option>
+      <option value="edith">EDITH (Direct, tactical)</option>
+      <option value="hal">HAL 9000 (Calm, unsettling)</option>
+    </select>
+    <div class="brain-info">Brain: <span id="brain-label">—</span></div>
   </div>
 
   <script>
@@ -257,6 +478,9 @@
         if (data.state === 'thinking') orb.classList.add('thinking');
         if (data.state === 'speaking') orb.classList.add('speaking');
 
+        // Update brain label
+        if (data.brain) brainLabel.textContent = data.brain;
+
         // Update output if changed — and play TTS audio from browser
         if (data.lastOutput && data.lastOutput !== lastOutput) {
           lastOutput = data.lastOutput;
@@ -289,7 +513,127 @@
       }
     }
 
+    // --- Settings Panel ---
+    const settingsToggle = document.getElementById('settings-toggle');
+    const settingsPanel = document.getElementById('settings-panel');
+    const voiceSelect = document.getElementById('voice-select');
+    const personalitySelect = document.getElementById('personality-select');
+    const brainLabel = document.getElementById('brain-label');
+
+    settingsToggle.addEventListener('click', () => {
+      settingsPanel.classList.toggle('open');
+    });
+
+    voiceSelect.addEventListener('change', () => {
+      fetch(`${API}/settings`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ voice: voiceSelect.value }),
+      });
+      localStorage.setItem('jarvis-voice', voiceSelect.value);
+    });
+
+    personalitySelect.addEventListener('change', () => {
+      fetch(`${API}/settings`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ personality: personalitySelect.value }),
+      });
+      localStorage.setItem('jarvis-personality', personalitySelect.value);
+    });
+
+    // Restore saved settings
+    const savedVoice = localStorage.getItem('jarvis-voice');
+    const savedPersonality = localStorage.getItem('jarvis-personality');
+    if (savedVoice) voiceSelect.value = savedVoice;
+    if (savedPersonality) personalitySelect.value = savedPersonality;
+
     setInterval(pollState, 500);
+
+    // --- GPU Stats ---
+    const gpuEl = document.getElementById('gpu-stats');
+
+    function bar(cls, pct) {
+      return `<div class="gpu-bar ${cls}"><div class="gpu-bar-fill" style="width:${Math.min(pct,100)}%"></div></div>`;
+    }
+
+    async function pollGPU() {
+      try {
+        const res = await fetch(`${API}/gpu`);
+        const data = await res.json();
+        if (!data.gpus || data.gpus.length === 0) {
+          gpuEl.innerHTML = '<span style="opacity:0.3">No GPU detected</span>';
+          return;
+        }
+        gpuEl.innerHTML = data.gpus.map(g => {
+          const memPct = Math.round(g.memUsed / g.memTotal * 100);
+          const pwrPct = Math.round(g.power / g.powerLimit * 100);
+          return `
+            <div class="gpu-name">${g.name}</div>
+            <div class="gpu-row"><span>Temp</span><span class="val">${g.temp}°C</span></div>
+            ${bar('bar-temp', g.temp)}
+            <div class="gpu-row"><span>GPU</span><span class="val">${g.utilization}%</span></div>
+            ${bar('bar-util', g.utilization)}
+            <div class="gpu-row"><span>VRAM</span><span class="val">${g.memUsed} / ${g.memTotal} MB</span></div>
+            ${bar('bar-mem', memPct)}
+            <div class="gpu-row"><span>Power</span><span class="val">${g.power}W / ${g.powerLimit}W</span></div>
+            ${bar('bar-power', pwrPct)}
+            <div class="gpu-row"><span>Clock</span><span class="val">${g.clockCore} MHz</span></div>
+            <div class="gpu-row"><span>VRAM Clock</span><span class="val">${g.clockMem} MHz</span></div>
+            ${g.fan !== null ? `<div class="gpu-row"><span>Fan</span><span class="val">${g.fan}%</span></div>` : ''}
+          `;
+        }).join('<hr class="gpu-separator">');
+      } catch {}
+    }
+
+    pollGPU();
+    setInterval(pollGPU, 3000);
+
+    // --- Live Log ---
+    const logLines = document.getElementById('log-lines');
+    let lastLogHash = '';
+
+    function classifyLog(line) {
+      if (line.includes('HEARD:')) return 'heard';
+      if (line.includes('SAID:')) return 'said';
+      if (line.includes('Router') || line.includes('Ollama')) return 'route';
+      if (line.includes('Tool:') || line.includes('REACT')) return 'tool';
+      if (line.includes('WAKE:')) return 'wake';
+      if (line.includes('Error') || line.includes('WARN')) return 'error';
+      if (line.includes('Ready.')) return 'ready';
+      if (line.includes('TTS')) return 'route';
+      return '';
+    }
+
+    async function pollLogs() {
+      try {
+        const res = await fetch(`${API}/logs`);
+        const data = await res.json();
+        if (!data.lines) return;
+        const hash = data.lines[data.lines.length - 1] || '';
+        if (hash !== lastLogHash) {
+          lastLogHash = hash;
+          logLines.innerHTML = data.lines.map(l => {
+            const cls = classifyLog(l);
+            return `<div class="log-line ${cls}">${l.replace(/</g, '&lt;')}</div>`;
+          }).join('');
+          logLines.parentElement.scrollTop = logLines.parentElement.scrollHeight;
+        }
+      } catch {}
+    }
+
+    // Click to expand/collapse log
+    const logPanel = document.getElementById('log-panel');
+    const logToggle = document.getElementById('log-toggle');
+    logToggle.addEventListener('click', () => {
+      logPanel.classList.toggle('expanded');
+      if (logPanel.classList.contains('expanded')) {
+        logPanel.scrollTop = logPanel.scrollHeight;
+      }
+    });
+
+    pollLogs();
+    setInterval(pollLogs, 1000);
   </script>
 </body>
 </html>
