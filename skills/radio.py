@@ -16,8 +16,8 @@ SKILL_DESCRIPTION = "Internet radio — Finnish stations (Nova, SuomiPop, Rock, 
 
 STATIONS = {
     "nova": {"type": "bauer", "id": "fi_radionova", "label": "Radio Nova", "fallback": "https://rayo.fi/radio-nova"},
-    "suomipop": {"type": "url", "url": "https://www.supla.fi/radiosuomipop", "label": "Radio Suomipop", "fallback": "https://rayo.fi/radio-suomipop"},
-    "rock": {"type": "url", "url": "https://www.supla.fi/radiorock", "label": "Radio Rock", "fallback": "https://rayo.fi/radio-rock"},
+    "suomipop": {"type": "url", "url": "https://aud-stream-suomipop.nm-elemental.nelonenmedia.fi/playlist.m3u8", "label": "Radio Suomipop", "fallback": "https://rayo.fi/radio-suomipop"},
+    "rock": {"type": "url", "url": "https://aud-stream-radiorock.nm-elemental.nelonenmedia.fi/playlist.m3u8", "label": "Radio Rock", "fallback": "https://rayo.fi/radio-rock"},
     "yle1": {"type": "url", "url": "https://yleradiolive.akamaized.net/hls/live/2027671/in-YleRadio1/master.m3u8", "label": "YLE Radio 1"},
     "ylex": {"type": "url", "url": "https://yleradiolive.akamaized.net/hls/live/2027673/in-YleX/master.m3u8", "label": "YLE X"},
     "lofi": {"type": "url", "url": "https://play.streamafrica.net/lofiradio", "label": "Lo-Fi Radio"},

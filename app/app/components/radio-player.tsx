@@ -6,8 +6,8 @@ import Hls from "hls.js";
 // Station URLs embedded — no server round-trip needed
 const STATIONS: Record<string, { label: string; url: string; type: "direct" | "hls" | "bauer" }> = {
   nova:     { label: "Radio Nova",     url: "", type: "bauer" },
-  suomipop: { label: "Radio Suomipop", url: "https://www.supla.fi/radiosuomipop", type: "direct" },
-  rock:     { label: "Radio Rock",     url: "https://www.supla.fi/radiorock", type: "direct" },
+  suomipop: { label: "Radio Suomipop", url: "https://aud-stream-suomipop.nm-elemental.nelonenmedia.fi/playlist.m3u8", type: "hls" },
+  rock:     { label: "Radio Rock",     url: "https://aud-stream-radiorock.nm-elemental.nelonenmedia.fi/playlist.m3u8", type: "hls" },
   yle1:     { label: "YLE Radio 1",    url: "https://yleradiolive.akamaized.net/hls/live/2027671/in-YleRadio1/master.m3u8", type: "hls" },
   ylex:     { label: "YLE X",          url: "https://yleradiolive.akamaized.net/hls/live/2027673/in-YleX/master.m3u8", type: "hls" },
   lofi:     { label: "Lo-Fi Radio",    url: "https://play.streamafrica.net/lofiradio", type: "direct" },
