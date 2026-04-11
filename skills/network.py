@@ -101,6 +101,19 @@ DEVICE_ICONS = {
 }
 
 
+def _resolve_hostname(ip: str) -> str:
+    """Try DNS reverse lookup for hostname."""
+    try:
+        import socket
+        name, _, _ = socket.gethostbyaddr(ip)
+        # Strip domain suffix
+        if "." in name:
+            name = name.split(".")[0]
+        return name
+    except Exception:
+        return ""
+
+
 def _identify_device(ip: str, mac: str, hostname: str, ports: list) -> dict:
     """Identify device type from MAC OUI, ports, and hostname."""
     mac_prefix = mac[:8].lower() if mac else ""
@@ -138,10 +151,14 @@ def _identify_device(ip: str, mac: str, hostname: str, ports: list) -> dict:
     if ip.endswith(".1"):
         device_type = "router"
 
+    # Try DNS reverse lookup if no hostname
+    if not hostname or hostname == ip:
+        hostname = _resolve_hostname(ip) or ip
+
     return {
         "ip": ip,
         "mac": mac,
-        "hostname": hostname or ip,
+        "hostname": hostname,
         "type": device_type,
         "vendor": vendor,
         "icon": DEVICE_ICONS.get(device_type, "?"),

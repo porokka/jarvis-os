@@ -153,64 +153,72 @@ export function NetworkMap({ onScanComplete }: { onScanComplete?: () => void } =
     }
   };
 
-  // Layout: router at top center, devices in radial layout below
+  // Layout: router at top, devices in a grid below with proper spacing
   const layout = useMemo(() => {
     const devices = topology.devices || [];
     if (devices.length === 0) return [];
 
-    const width = 500;
-    const height = 380;
-    const centerX = width / 2;
-    const routerY = 40;
-
-    // Router at top
     const router = devices.find(d => d.type === "router");
     const others = devices.filter(d => d.type !== "router");
 
-    // Group by type for visual clustering
-    const groups: Record<string, Device[]> = {};
-    for (const d of others) {
-      const g = d.type;
-      if (!groups[g]) groups[g] = [];
-      groups[g].push(d);
-    }
-
     const positioned: { device: Device; x: number; y: number }[] = [];
 
-    // Router
+    // Grid layout params
+    const cols = Math.min(6, Math.max(3, Math.ceil(Math.sqrt(others.length))));
+    const cellW = 90;
+    const cellH = 55;
+    const gridW = cols * cellW;
+    const totalW = Math.max(gridW + 60, 500);
+    const centerX = totalW / 2;
+    const routerY = 35;
+
+    // Router at top center
     if (router) {
       positioned.push({ device: router, x: centerX, y: routerY });
     }
 
-    // Arrange groups in tiers
-    const groupKeys = Object.keys(groups);
-    const tierHeight = 70;
-    let currentY = routerY + tierHeight;
+    // Sort devices: group by type for visual clustering
+    const typeOrder = ["desktop", "server", "ai", "media", "shield", "tv", "phone", "speaker", "nas", "printer", "iot", "receiver", "cast", "unknown"];
+    others.sort((a, b) => {
+      const ai = typeOrder.indexOf(a.type);
+      const bi = typeOrder.indexOf(b.type);
+      return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
+    });
 
-    for (let gi = 0; gi < groupKeys.length; gi++) {
-      const group = groups[groupKeys[gi]];
-      const count = group.length;
-      const spacing = Math.min(80, (width - 60) / Math.max(count, 1));
-      const startX = centerX - ((count - 1) * spacing) / 2;
+    // Place in grid
+    const startY = routerY + 65;
+    const startX = centerX - ((Math.min(cols, others.length) - 1) * cellW) / 2;
 
-      for (let i = 0; i < count; i++) {
-        positioned.push({
-          device: group[i],
-          x: startX + i * spacing,
-          y: currentY + (i % 2 === 0 ? 0 : 20), // stagger
-        });
-      }
-
-      currentY += tierHeight;
-      if (currentY > height - 40) currentY = routerY + tierHeight; // wrap
+    for (let i = 0; i < others.length; i++) {
+      const col = i % cols;
+      const row = Math.floor(i / cols);
+      positioned.push({
+        device: others[i],
+        x: startX + col * cellW,
+        y: startY + row * cellH,
+      });
     }
 
     return positioned;
   }, [topology]);
 
-  const svgWidth = 500;
-  const svgHeight = Math.max(380, (layout.length / 5) * 80 + 80);
+  const maxX = Math.max(500, ...layout.map(l => l.x + 50));
+  const maxY = Math.max(200, ...layout.map(l => l.y + 40));
+  const svgWidth = maxX;
+  const svgHeight = maxY;
   const routerPos = layout.find(l => l.device.type === "router");
+
+  // Better display name: prefer hostname, fallback to vendor + last octet
+  function displayName(d: Device): string {
+    if (d.hostname && d.hostname !== d.ip && d.hostname.length > 1) {
+      return d.hostname.length > 16 ? d.hostname.slice(0, 14) + ".." : d.hostname;
+    }
+    if (d.vendor) {
+      const lastOctet = d.ip.split(".").pop();
+      return `${d.vendor} (.${lastOctet})`;
+    }
+    return d.ip.replace("192.168.0.", ".0.");
+  }
 
   return (
     <div className="network-map">
@@ -261,18 +269,17 @@ export function NetworkMap({ onScanComplete }: { onScanComplete?: () => void } =
                     x={l.x} y={l.y + 16}
                     textAnchor="middle"
                     fill={color}
-                    fontSize="6"
-                    opacity="0.7"
+                    fontSize="7"
+                    opacity="0.8"
+                    fontWeight="500"
                   >
-                    {l.device.hostname.length > 14
-                      ? l.device.hostname.slice(0, 12) + "..."
-                      : l.device.hostname}
+                    {displayName(l.device)}
                   </text>
                   <text
-                    x={l.x} y={l.y + 23}
+                    x={l.x} y={l.y + 24}
                     textAnchor="middle"
-                    fill="rgba(255,255,255,0.25)"
-                    fontSize="5"
+                    fill="rgba(255,255,255,0.3)"
+                    fontSize="5.5"
                   >
                     {l.device.ip}
                   </text>
