@@ -116,7 +116,7 @@ export function ImageGenerator() {
         await new Promise((r) => setTimeout(r, 3000));
         attempts++;
 
-        const statusRes = await fetch("http://localhost:4000/api/flux/status", { cache: "no-store" });
+        const statusRes = await fetch("/api/flux-status", { cache: "no-store" });
         const statusData = await statusRes.json();
 
         if (statusData.status === "done") {
@@ -125,7 +125,7 @@ export function ImageGenerator() {
 
           if (pathMatch) {
             const imgPath = pathMatch[1].trim();
-            setImageUrl(`http://localhost:4000/api/file?path=${encodeURIComponent(imgPath)}`);
+            setImageUrl(`/api/file?path=${encodeURIComponent(imgPath)}`);
             setStage("done");
             try {
               await fetch("http://localhost:4000/api/input", {

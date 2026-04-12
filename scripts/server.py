@@ -178,6 +178,15 @@ class JarvisHandler(http.server.SimpleHTTPRequestHandler):
                 self.send_error(500, str(e))
             return
 
+        if path == "/api/flux/status":
+            result_file = BRIDGE_DIR / "flux_result.json"
+            if result_file.exists():
+                data = json.loads(result_file.read_text(encoding="utf-8"))
+                self._json_response(data)
+            else:
+                self._json_response({"status": "idle"})
+            return
+
         if path == "/api/output":
             self._json_response({"output": read_file("output.txt")})
             return
@@ -268,15 +277,6 @@ class JarvisHandler(http.server.SimpleHTTPRequestHandler):
 
             threading.Thread(target=_generate, daemon=True).start()
             self._json_response({"status": "generating", "poll": "/api/flux/status"})
-            return
-
-        if path == "/api/flux/status":
-            result_file = BRIDGE_DIR / "flux_result.json"
-            if result_file.exists():
-                data = json.loads(result_file.read_text(encoding="utf-8"))
-                self._json_response(data)
-            else:
-                self._json_response({"status": "idle"})
             return
 
         if path == "/api/transcribe":
