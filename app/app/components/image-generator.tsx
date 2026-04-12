@@ -8,7 +8,7 @@ function buildFluxWorkflow(prompt: string) {
     "1": {
       class_type: "CheckpointLoaderSimple",
       inputs: {
-        ckpt_name: "flux1-schnell-fp8.safetensors",
+        ckpt_name: "flux1-dev.safetensors",
       },
     },
     "2": {
@@ -37,10 +37,10 @@ function buildFluxWorkflow(prompt: string) {
       class_type: "KSampler",
       inputs: {
         seed: Math.floor(Math.random() * 2 ** 32),
-        steps: 4,
-        cfg: 1.0,
+        steps: 20,
+        cfg: 3.5,
         sampler_name: "euler",
-        scheduler: "simple",
+        scheduler: "normal",
         denoise: 1.0,
         model: ["1", 0],
         positive: ["2", 0],
