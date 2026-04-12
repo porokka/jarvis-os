@@ -12,6 +12,7 @@ import { TimersWidget } from "./components/timers-widget";
 import { SettingsPanel } from "./components/settings-panel";
 import { RadioPlayer } from "./components/radio-player";
 import { NetworkMap } from "./components/network-map";
+import { ImageGenerator } from "./components/image-generator";
 
 type JarvisState = "standby" | "listening" | "thinking" | "speaking" | "asking";
 
@@ -815,6 +816,11 @@ export default function JarvisPage() {
               <SystemLog />
             </div>
           )}
+          {activeTab === "imagegen" && (
+            <div className="flex-1 overflow-y-auto p-6 flex items-center justify-center">
+              <ImageGenerator />
+            </div>
+          )}
         </div>
 
         {/* ──── RIGHT PANEL ──── */}
@@ -826,6 +832,7 @@ export default function JarvisPage() {
             {[
               { id: "network", label: "NETWORK" },
               { id: "logs", label: "LOGS" },
+              { id: "imagegen", label: "IMAGE GEN" },
             ].map(item => (
               <button
                 key={item.id}
