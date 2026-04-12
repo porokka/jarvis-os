@@ -1,0 +1,8 @@
+{
+  "model": "schnell",
+  "width": 1024,
+  "height": 1024,
+  "steps": 4,
+  "guidance": 3.5,
+  "enhance_prompts": true
+}
