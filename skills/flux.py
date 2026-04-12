@@ -153,18 +153,34 @@ def exec_generate_image(prompt: str, enhance: str = "yes") -> str:
     guidance = cfg.get("guidance", 3.5)
 
     try:
-        # Run FLUX via CLI
-        # Use ComfyUI if running, otherwise FLUX CLI
         import urllib.request as _ur
+
+        # Auto-start ComfyUI if not running
         try:
             _ur.urlopen("http://localhost:8188/system_stats", timeout=2)
-            comfyui_available = True
+            print("[FLUX] ComfyUI already running")
         except Exception:
-            comfyui_available = False
+            print("[FLUX] Starting ComfyUI...")
+            subprocess.Popen(
+                ["python3", "main.py", "--listen", "0.0.0.0", "--port", "8188"],
+                cwd="/mnt/e/coding/ComfyUI",
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            # Wait for startup
+            for _ in range(30):
+                time.sleep(2)
+                try:
+                    _ur.urlopen("http://localhost:8188/system_stats", timeout=2)
+                    print("[FLUX] ComfyUI ready")
+                    break
+                except Exception:
+                    pass
+            else:
+                _restore_big()
+                return "ComfyUI failed to start. Check if it's installed at /mnt/e/coding/ComfyUI"
 
-        if comfyui_available:
-            # Use ComfyUI API with local fp8 model
-            print("[FLUX] Using ComfyUI backend")
+        # Generate via ComfyUI API with fp8 model
+        print("[FLUX] Generating via ComfyUI")
             import random
             workflow = {
                 "1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "flux1-dev-fp8.safetensors"}},
@@ -208,53 +224,9 @@ def exec_generate_image(prompt: str, enhance: str = "yes") -> str:
             _restore_big()
             return "Generation timed out."
 
-        # Fallback: FLUX CLI with local model paths
-        env = os.environ.copy()
-        env["FLUX_MODEL"] = "/mnt/e/models/flux1-dev-fp8.safetensors"
-        env["HF_TOKEN"] = "hf_placeholder"
-
-        cmd = [
-            "python3", "-m", "flux", "t2i",
-            "--name", f"flux-{model}",
-            "--width", str(width),
-            "--height", str(height),
-            "--num_steps", str(steps),
-            "--guidance", str(guidance),
-            "--output_dir", str(IMAGES_DIR),
-            "--prompt", enhanced,
-        ]
-
-        print(f"[FLUX] Generating {width}x{height} with {model} ({steps} steps)...")
-        result = subprocess.run(
-            cmd,
-            capture_output=True, text=True,
-            timeout=300,
-            cwd=str(FLUX_DIR),
-            env=env,
-        )
-
-        output = (result.stdout + result.stderr).strip()
-        print(f"[FLUX] Output: {output[:200]}")
-
-        # Find generated image
-        if result.returncode == 0:
-            # Look for newest image in output dir
-            images = sorted(IMAGES_DIR.glob("*.png"), key=lambda p: p.stat().st_mtime, reverse=True)
-            if images:
-                img_path = images[0]
-                _restore_big()
-                return (
-                    f"Image generated: {img_path.name}\n"
-                    f"Path: {img_path}\n"
-                    f"Prompt: {enhanced[:100]}..."
-                )
-
         _restore_big()
-        return f"Generation may have failed. Output:\n{output[:500]}"
+        return "ComfyUI is required for image generation. Install at /mnt/e/coding/ComfyUI"
 
-    except subprocess.TimeoutExpired:
-        _restore_big()
-        return "Image generation timed out (5 minutes)."
     except Exception as e:
         _restore_big()
         return f"FLUX error: {e}"
