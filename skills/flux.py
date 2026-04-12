@@ -180,51 +180,48 @@ def exec_generate_image(prompt: str, enhance: str = "yes") -> str:
 
         # Generate via ComfyUI API with fp8 model
         print("[FLUX] Generating via ComfyUI")
-            import random
-            workflow = {
-                "1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "flux1-dev-fp8.safetensors"}},
-                "2": {"class_type": "CLIPTextEncode", "inputs": {"text": enhanced, "clip": ["1", 1]}},
-                "3": {"class_type": "CLIPTextEncode", "inputs": {"text": "", "clip": ["1", 1]}},
-                "4": {"class_type": "EmptyLatentImage", "inputs": {"width": width, "height": height, "batch_size": 1}},
-                "5": {"class_type": "KSampler", "inputs": {
-                    "seed": random.randint(0, 2**32), "steps": steps, "cfg": guidance,
-                    "sampler_name": "euler", "scheduler": "normal", "denoise": 1.0,
-                    "model": ["1", 0], "positive": ["2", 0], "negative": ["3", 0], "latent_image": ["4", 0]}},
-                "6": {"class_type": "VAEDecode", "inputs": {"samples": ["5", 0], "vae": ["1", 2]}},
-                "7": {"class_type": "SaveImage", "inputs": {"filename_prefix": f"jarvis_flux_{ts}", "images": ["6", 0]}},
-            }
-            payload = json.dumps({"prompt": workflow}).encode("utf-8")
-            req = _ur.Request("http://localhost:8188/prompt", data=payload,
-                              headers={"Content-Type": "application/json"})
-            resp_data = json.loads(_ur.urlopen(req, timeout=10).read())
-            prompt_id = resp_data.get("prompt_id")
+        import random
+        workflow = {
+            "1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "flux1-dev-fp8.safetensors"}},
+            "2": {"class_type": "CLIPTextEncode", "inputs": {"text": enhanced, "clip": ["1", 1]}},
+            "3": {"class_type": "CLIPTextEncode", "inputs": {"text": "", "clip": ["1", 1]}},
+            "4": {"class_type": "EmptyLatentImage", "inputs": {"width": width, "height": height, "batch_size": 1}},
+            "5": {"class_type": "KSampler", "inputs": {
+                "seed": random.randint(0, 2**32), "steps": steps, "cfg": guidance,
+                "sampler_name": "euler", "scheduler": "normal", "denoise": 1.0,
+                "model": ["1", 0], "positive": ["2", 0], "negative": ["3", 0], "latent_image": ["4", 0]}},
+            "6": {"class_type": "VAEDecode", "inputs": {"samples": ["5", 0], "vae": ["1", 2]}},
+            "7": {"class_type": "SaveImage", "inputs": {"filename_prefix": f"jarvis_flux_{ts}", "images": ["6", 0]}},
+        }
+        payload = json.dumps({"prompt": workflow}).encode("utf-8")
+        req = _ur.Request("http://localhost:8188/prompt", data=payload,
+                          headers={"Content-Type": "application/json"})
+        resp_data = json.loads(_ur.urlopen(req, timeout=10).read())
+        prompt_id = resp_data.get("prompt_id")
 
-            # Poll for completion
-            for _ in range(90):  # 4.5 min
-                time.sleep(3)
-                hist = json.loads(_ur.urlopen(f"http://localhost:8188/history/{prompt_id}", timeout=5).read())
-                entry = hist.get(prompt_id, {})
-                if entry.get("status", {}).get("status_str") == "error":
+        # Poll for completion
+        for _ in range(90):  # 4.5 min
+            time.sleep(3)
+            hist = json.loads(_ur.urlopen(f"http://localhost:8188/history/{prompt_id}", timeout=5).read())
+            entry = hist.get(prompt_id, {})
+            if entry.get("status", {}).get("status_str") == "error":
+                _restore_big()
+                return "ComfyUI generation failed."
+            outputs = entry.get("outputs", {})
+            for nid in outputs:
+                images = outputs[nid].get("images", [])
+                if images:
+                    img = images[0]
+                    src = Path(f"/mnt/e/coding/ComfyUI/output/{img['filename']}")
+                    dst = IMAGES_DIR / img["filename"]
+                    if src.exists():
+                        import shutil
+                        shutil.copy2(str(src), str(dst))
                     _restore_big()
-                    return f"ComfyUI generation failed."
-                outputs = entry.get("outputs", {})
-                for nid in outputs:
-                    images = outputs[nid].get("images", [])
-                    if images:
-                        img = images[0]
-                        src = Path(f"/mnt/e/coding/ComfyUI/output/{img['filename']}")
-                        dst = IMAGES_DIR / img["filename"]
-                        if src.exists():
-                            import shutil
-                            shutil.copy2(str(src), str(dst))
-                        _restore_big()
-                        return f"Image generated: {img['filename']}\nPath: {dst}\nPrompt: {enhanced[:100]}..."
-
-            _restore_big()
-            return "Generation timed out."
+                    return f"Image generated: {img['filename']}\nPath: {dst}\nPrompt: {enhanced[:100]}..."
 
         _restore_big()
-        return "ComfyUI is required for image generation. Install at /mnt/e/coding/ComfyUI"
+        return "Generation timed out."
 
     except Exception as e:
         _restore_big()
