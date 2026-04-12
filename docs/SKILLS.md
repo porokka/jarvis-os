@@ -267,3 +267,8 @@ Tool calls are logged during execution:
 | LG TV | `skills/lg_tv.py` | [docs/skills/lg_tv.md](skills/lg_tv.md) |
 | Panasonic Blu-ray | `skills/panasonic_bd.py` | [docs/skills/panasonic_bd.md](skills/panasonic_bd.md) |
 | Network | `skills/network.py` | [docs/skills/network.md](skills/network.md) |
+| Git | `skills/git.py` | [docs/skills/git.md](skills/git.md) |
+| FLUX Image Gen | `skills/flux.py` | [docs/skills/flux.md](skills/flux.md) |
+| Plex | `skills/plex.py` | [docs/skills/plex.md](skills/plex.md) |
+| Philips Hue | `skills/hue.py` | [docs/skills/hue.md](skills/hue.md) |
+| Cloud LLM | `skills/cloud_llm.py` | [docs/skills/cloud_llm.md](skills/cloud_llm.md) |

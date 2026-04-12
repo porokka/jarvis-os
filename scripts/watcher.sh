@@ -212,14 +212,13 @@ call_claude() {
   local system=$(load_personality_file)
   local history=""
   echo "claude" > "$BRAIN"
-  log "🟠 Claude Code (Anthropic)"
 
-  # Include recent history in prompt for Claude Code
+  # Include recent history
   if [ -f "$HISTORY" ] && [ -s "$HISTORY" ]; then
     history=$(tail -"$MAX_HISTORY" "$HISTORY" | sed 's/^user|/User: /' | sed 's/^assistant|/JARVIS: /')
   fi
 
-  echo "$system
+  local full_prompt="$system
 
 ## Recent conversation
 $history
@@ -228,7 +227,39 @@ $history
 
 The user just said: \"$command\"
 
-Respond as JARVIS. Plain text only, no markdown, max 4 sentences." | $CLAUDE_CMD 2>>"$LOG"
+Respond as JARVIS. Plain text only, no markdown, max 4 sentences."
+
+  # Try cloud API first (faster), fall back to claude --print
+  local cloud_config="$JARVIS_DIR/config/cloud_llm.json"
+  if [ -f "$cloud_config" ]; then
+    local api_key=$(python3 -c "import json; print(json.load(open('$cloud_config')).get('anthropic',{}).get('api_key',''))" 2>/dev/null)
+    local model=$(python3 -c "import json; print(json.load(open('$cloud_config')).get('anthropic',{}).get('model','claude-sonnet-4-20250514'))" 2>/dev/null)
+    if [ -n "$api_key" ] && [ "$api_key" != "" ]; then
+      log "Claude API ($model)"
+      local response=$(python3 -c "
+import json, urllib.request
+body = json.dumps({
+    'model': '$model',
+    'max_tokens': 500,
+    'system': '''$(echo "$system" | sed "s/'/\\\\'/g")''',
+    'messages': [{'role': 'user', 'content': '''$(echo "$command" | sed "s/'/\\\\'/g")'''}]
+}).encode('utf-8')
+req = urllib.request.Request('https://api.anthropic.com/v1/messages', data=body,
+    headers={'Content-Type': 'application/json', 'x-api-key': '$api_key', 'anthropic-version': '2023-06-01'})
+resp = urllib.request.urlopen(req, timeout=30)
+data = json.loads(resp.read())
+print(data['content'][0]['text'])
+" 2>>"$LOG")
+      if [ -n "$response" ]; then
+        echo "$response"
+        return
+      fi
+    fi
+  fi
+
+  # Fallback: claude --print CLI
+  log "Claude Code CLI"
+  echo "$full_prompt" | $CLAUDE_CMD 2>>"$LOG"
 }
 
 orpheus_available() {
