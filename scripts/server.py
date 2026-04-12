@@ -383,6 +383,20 @@ class JarvisHandler(http.server.SimpleHTTPRequestHandler):
 
 
 if __name__ == "__main__":
+    # Ensure Ollama model is loaded on startup
+    import threading
+    def _ensure_ollama():
+        try:
+            import urllib.request
+            payload = json.dumps({"model": "qwen3:30b-a3b", "prompt": "", "keep_alive": -1}).encode()
+            req = urllib.request.Request("http://localhost:11434/api/generate", data=payload,
+                                         headers={"Content-Type": "application/json"})
+            urllib.request.urlopen(req, timeout=30)
+            print("[JARVIS] Ollama model loaded")
+        except Exception as e:
+            print(f"[JARVIS] Ollama load skipped: {e}")
+    threading.Thread(target=_ensure_ollama, daemon=True).start()
+
     server = http.server.HTTPServer(("127.0.0.1", PORT), JarvisHandler)
     print(f"[JARVIS] HTTP server on http://localhost:{PORT}")
     print(f"[JARVIS] Serving HTML from {SCRIPTS_DIR}")
