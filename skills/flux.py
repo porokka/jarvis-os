@@ -118,10 +118,11 @@ def _swap_to_mini():
 
 
 def _restore_big():
-    """Restore big model after generation."""
+    """Kill ComfyUI + restore big Ollama model."""
+    print("[FLUX] Stopping ComfyUI...")
+    subprocess.run(["pkill", "-f", "python3 main.py"], capture_output=True, timeout=5)
+    time.sleep(3)
     print("[FLUX] Restoring big model...")
-    _ollama_model("qwen3:8b", keep_alive=0)
-    time.sleep(2)
     _ollama_model("qwen3:30b-a3b", keep_alive=-1)
     print("[FLUX] Big model restored — full power")
 
@@ -138,8 +139,11 @@ def exec_generate_image(prompt: str, enhance: str = "yes") -> str:
     else:
         enhanced = prompt
 
-    # Step 2: Swap to mini model
-    _swap_to_mini()
+    # Step 2: Unload ALL Ollama models — ComfyUI needs max VRAM
+    print("[FLUX] Unloading Ollama completely for VRAM...")
+    _ollama_model("qwen3:30b-a3b", keep_alive=0)
+    _ollama_model("qwen3:8b", keep_alive=0)
+    time.sleep(3)
 
     # Step 3: Generate image
     IMAGES_DIR.mkdir(parents=True, exist_ok=True)
