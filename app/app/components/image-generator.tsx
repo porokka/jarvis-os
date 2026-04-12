@@ -173,7 +173,7 @@ export function ImageGenerator() {
     a.download = `jarvis_flux_${Date.now()}.png`;
     a.click();
     // Reload Ollama after done with image gen
-    reloadOllama();
+    // VRAM swap handled by skill
   };
 
   const handleDiscard = () => {
@@ -184,7 +184,7 @@ export function ImageGenerator() {
     setError("");
     setProgress("");
     // Reload Ollama
-    reloadOllama();
+    // VRAM swap handled by skill
   };
 
   const handleEditPrompt = () => setStage("enhanced");
