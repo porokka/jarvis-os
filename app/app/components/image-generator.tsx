@@ -94,7 +94,7 @@ export function ImageGenerator() {
     setEnhancedPrompt("");
 
     try {
-      // Enhance with big model (still loaded), swap happens at generate step
+      // Enhance with big model — let it think for quality
       const res = await fetch(`${OLLAMA_URL}/api/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -103,18 +103,24 @@ export function ImageGenerator() {
           prompt: userInput,
           system: ENHANCE_SYSTEM,
           stream: false,
-          options: { num_predict: 300 },
+          options: { num_predict: 500 },
         }),
       });
 
       if (!res.ok) throw new Error(`Ollama returned ${res.status}`);
 
       const data = await res.json();
+      // Qwen3 may put content in 'thinking' or 'response', or use <think> tags
       let enhanced = data.response?.trim() || "";
 
       // Strip thinking tags if present
       if (enhanced.includes("<think>")) {
         enhanced = enhanced.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
+      }
+
+      // If response empty, use thinking field (Qwen3 thinking mode)
+      if (!enhanced && data.thinking) {
+        enhanced = data.thinking.trim();
       }
 
       if (!enhanced) throw new Error("Empty response from Ollama");

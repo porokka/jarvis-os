@@ -64,7 +64,7 @@ def _enhance_prompt(user_prompt: str) -> str:
         "prompt": user_prompt,
         "system": system,
         "stream": False,
-        "options": {"num_predict": 250},
+        "options": {"num_predict": 500},
     }).encode("utf-8")
 
     try:
@@ -80,6 +80,9 @@ def _enhance_prompt(user_prompt: str) -> str:
         if "<think>" in enhanced:
             import re
             enhanced = re.sub(r'<think>.*?</think>', '', enhanced, flags=re.DOTALL).strip()
+        # Fallback to thinking field
+        if not enhanced and data.get("thinking"):
+            enhanced = data["thinking"].strip()
         return enhanced or user_prompt
     except Exception as e:
         print(f"[FLUX] Prompt enhancement failed: {e}")
