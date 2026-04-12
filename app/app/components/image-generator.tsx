@@ -86,64 +86,75 @@ export function ImageGenerator() {
   }, [userInput]);
 
 
-  // ─── Step 2: Generate image via FLUX skill (no ComfyUI) ───
+  // ─── Step 2: Generate image via FLUX skill ───
   const generateImage = useCallback(async (prompt: string) => {
     setStage("generating");
     setError("");
     setImageUrl("");
-    setProgress("Generating image via FLUX...");
+    setProgress("Starting FLUX generation...");
 
     try {
-      const res = await fetch("/api/generate-image", {
+      const size = SIZE_PRESETS[sizePreset] || SIZE_PRESETS.square;
+
+      // Kick off generation
+      const startRes = await fetch("/api/generate-image", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          prompt,
-          width: (SIZE_PRESETS[sizePreset] || SIZE_PRESETS.square).w,
-          height: (SIZE_PRESETS[sizePreset] || SIZE_PRESETS.square).h,
-        }),
-        signal: AbortSignal.timeout(300000),
+        body: JSON.stringify({ prompt, width: size.w, height: size.h }),
       });
 
-      const data = await res.json();
+      const startData = await startRes.json();
+      if (startData.error) throw new Error(startData.error);
 
-      if (data.error) {
-        throw new Error(data.error);
+      setProgress("Enhancing prompt + generating image...");
+
+      // Poll for completion
+      let attempts = 0;
+      const maxAttempts = 90; // 4.5 min at 3s intervals
+
+      while (attempts < maxAttempts) {
+        await new Promise((r) => setTimeout(r, 3000));
+        attempts++;
+
+        const statusRes = await fetch("http://localhost:4000/api/flux/status", { cache: "no-store" });
+        const statusData = await statusRes.json();
+
+        if (statusData.status === "done") {
+          const message = statusData.message || "";
+          const pathMatch = message.match(/Path:\s*(.+\.png)/);
+
+          if (pathMatch) {
+            const imgPath = pathMatch[1].trim();
+            setImageUrl(`http://localhost:4000/api/file?path=${encodeURIComponent(imgPath)}`);
+            setStage("done");
+            try {
+              await fetch("http://localhost:4000/api/input", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ text: "__tts:Your image is ready, sir. Shall I save it?" }),
+              });
+            } catch {}
+          } else {
+            setError(message || "Generation completed but no image path found.");
+            setStage("error");
+          }
+          return;
+        }
+
+        if (statusData.status === "error") {
+          throw new Error(statusData.message || "Generation failed");
+        }
+
+        setProgress(`Generating image... (${attempts * 3}s)`);
       }
 
-      // Extract image path from response
-      const message = data.message || "";
-      const pathMatch = message.match(/Path:\s*(.+\.png)/);
-
-      if (pathMatch) {
-        // Serve image via bridge server
-        const imgPath = pathMatch[1].trim();
-        setImageUrl(`http://localhost:4000/api/file?path=${encodeURIComponent(imgPath)}`);
-        setStage("done");
-        // Speak notification
-        try {
-          await fetch("http://localhost:4000/api/input", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ text: "__tts:Your image is ready, sir. Shall I save it?" }),
-          });
-        } catch {}
-      } else {
-        // Generation ran but no clear image path — show message
-        setError(message || "Generation completed but no image found.");
-        setStage("error");
-      }
+      throw new Error("Generation timed out after 4.5 minutes");
     } catch (e) {
-      if ((e as Error).name === "AbortError" || (e as Error).name === "TimeoutError") {
-        setError("Generation timed out after 5 minutes.");
-      } else {
-        setError(
-          `Image generation failed: ${e instanceof Error ? e.message : String(e)}`
-        );
-      }
+      setError(`Image generation failed: ${e instanceof Error ? e.message : String(e)}`);
       setStage("error");
     }
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sizePreset]);
 
   // ─── Actions ───
   const handleGenerate = () => enhancePrompt();

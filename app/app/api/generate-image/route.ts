@@ -1,13 +1,13 @@
 /**
- * POST /api/generate-image — Generate image via FLUX skill (no ComfyUI)
- * Body: { prompt: string }
- * Returns: { status, image_path, message }
+ * POST /api/generate-image — Generate image via bridge server
+ * Calls FLUX skill directly through a dedicated endpoint.
+ * Body: { prompt: string, width?: number, height?: number }
  */
 import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
 
-const REACT_URL = process.env.REACT_URL || "http://localhost:7900";
+const BRIDGE_URL = process.env.BRIDGE_URL || "http://localhost:4000";
 
 export async function POST(request: Request) {
   try {
@@ -16,27 +16,16 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "No prompt provided" }, { status: 400 });
     }
 
-    // Call ReAct server which runs the flux skill
-    const res = await fetch(`${REACT_URL}/api/chat`, {
+    const res = await fetch(`${BRIDGE_URL}/api/flux`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "qwen3:30b-a3b",
-        messages: [
-          { role: "user", content: `generate a ${width}x${height} image of: ${prompt}` },
-        ],
-      }),
-      signal: AbortSignal.timeout(300000), // 5 min timeout
+      body: JSON.stringify({ prompt, width, height }),
+      signal: AbortSignal.timeout(300000),
     });
 
     const data = await res.json();
-    const message = data?.message?.content || "Generation complete";
-
-    return NextResponse.json({ status: "ok", message });
+    return NextResponse.json(data);
   } catch (e) {
-    return NextResponse.json(
-      { error: String(e) },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: String(e) }, { status: 500 });
   }
 }

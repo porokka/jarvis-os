@@ -229,6 +229,56 @@ class JarvisHandler(http.server.SimpleHTTPRequestHandler):
             self._json_response({"status": "ok"})
             return
 
+        if path == "/api/flux":
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length).decode("utf-8"))
+            prompt = body.get("prompt", "")
+            width = body.get("width", 1024)
+            height = body.get("height", 1024)
+
+            if not prompt:
+                self._json_response({"error": "No prompt"}, 400)
+                return
+
+            import threading
+
+            def _generate():
+                try:
+                    # Import and run FLUX skill
+                    import importlib
+                    sys.path.insert(0, str(Path(__file__).parent.parent))
+                    flux_mod = importlib.import_module("skills.flux")
+                    result = flux_mod.exec_generate_image(prompt, enhance="yes")
+
+                    # Write result to bridge for HUD
+                    BRIDGE_DIR.mkdir(parents=True, exist_ok=True)
+                    (BRIDGE_DIR / "flux_result.json").write_text(
+                        json.dumps({"status": "done", "message": result}),
+                        encoding="utf-8",
+                    )
+                except Exception as e:
+                    (BRIDGE_DIR / "flux_result.json").write_text(
+                        json.dumps({"status": "error", "message": str(e)}),
+                        encoding="utf-8",
+                    )
+
+            # Clear previous result
+            result_file = BRIDGE_DIR / "flux_result.json"
+            result_file.write_text(json.dumps({"status": "generating"}), encoding="utf-8")
+
+            threading.Thread(target=_generate, daemon=True).start()
+            self._json_response({"status": "generating", "poll": "/api/flux/status"})
+            return
+
+        if path == "/api/flux/status":
+            result_file = BRIDGE_DIR / "flux_result.json"
+            if result_file.exists():
+                data = json.loads(result_file.read_text(encoding="utf-8"))
+                self._json_response(data)
+            else:
+                self._json_response({"status": "idle"})
+            return
+
         if path == "/api/transcribe":
             length = int(self.headers.get("Content-Length", 0))
             audio_bytes = self.rfile.read(length)
