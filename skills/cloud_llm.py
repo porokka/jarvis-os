@@ -136,9 +136,29 @@ def _call_google(url: str, api_key: str, model: str, prompt: str, system: str = 
     return data["candidates"][0]["content"]["parts"][0]["text"]
 
 
-def exec_cloud_llm(provider: str, prompt: str, model: str = "", system: str = "") -> str:
-    """Call a cloud LLM provider."""
+def exec_cloud_llm(provider: str, prompt: str, model: str = "", system: str = "", use_tools: str = "no") -> str:
+    """Call a cloud LLM provider. Set use_tools=yes for tool-augmented calls."""
     provider = provider.lower().strip()
+
+    # Tool-augmented call via cloud_react.py
+    if use_tools.lower() in ("yes", "true", "1"):
+        import subprocess
+        scripts_dir = Path(__file__).parent.parent / "scripts"
+        try:
+            result = subprocess.run(
+                ["python3", str(scripts_dir / "cloud_react.py"),
+                 "--provider", provider,
+                 "--prompt", prompt,
+                 "--system", system or "You are JARVIS. Use tools when needed. Concise responses.",
+                 ] + (["--model", model] if model else []),
+                capture_output=True, text=True, timeout=120,
+            )
+            output = result.stdout.strip()
+            if output:
+                return output
+            return f"Cloud ReAct error: {result.stderr[:300]}"
+        except Exception as e:
+            return f"Cloud ReAct error: {e}"
 
     if provider == "list":
         cfg = _load_config()

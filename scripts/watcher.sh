@@ -229,27 +229,16 @@ The user just said: \"$command\"
 
 Respond as JARVIS. Plain text only, no markdown, max 4 sentences."
 
-  # Try cloud API first (faster), fall back to claude --print
+  # Try cloud ReAct (API + tools), fall back to claude --print
   local cloud_config="$JARVIS_DIR/config/cloud_llm.json"
   if [ -f "$cloud_config" ]; then
     local api_key=$(python3 -c "import json; print(json.load(open('$cloud_config')).get('anthropic',{}).get('api_key',''))" 2>/dev/null)
-    local model=$(python3 -c "import json; print(json.load(open('$cloud_config')).get('anthropic',{}).get('model','claude-sonnet-4-20250514'))" 2>/dev/null)
     if [ -n "$api_key" ] && [ "$api_key" != "" ]; then
-      log "Claude API ($model)"
-      local response=$(python3 -c "
-import json, urllib.request
-body = json.dumps({
-    'model': '$model',
-    'max_tokens': 500,
-    'system': '''$(echo "$system" | sed "s/'/\\\\'/g")''',
-    'messages': [{'role': 'user', 'content': '''$(echo "$command" | sed "s/'/\\\\'/g")'''}]
-}).encode('utf-8')
-req = urllib.request.Request('https://api.anthropic.com/v1/messages', data=body,
-    headers={'Content-Type': 'application/json', 'x-api-key': '$api_key', 'anthropic-version': '2023-06-01'})
-resp = urllib.request.urlopen(req, timeout=30)
-data = json.loads(resp.read())
-print(data['content'][0]['text'])
-" 2>>"$LOG")
+      log "Claude API + Tools"
+      local response=$(python3 "$JARVIS_DIR/scripts/cloud_react.py" \
+        --provider anthropic \
+        --prompt "$command" \
+        --system "$system" 2>>"$LOG")
       if [ -n "$response" ]; then
         echo "$response"
         return
@@ -257,7 +246,7 @@ print(data['content'][0]['text'])
     fi
   fi
 
-  # Fallback: claude --print CLI
+  # Fallback: claude --print CLI (no tools)
   log "Claude Code CLI"
   echo "$full_prompt" | $CLAUDE_CMD 2>>"$LOG"
 }
