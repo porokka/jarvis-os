@@ -151,6 +151,33 @@ class JarvisHandler(http.server.SimpleHTTPRequestHandler):
             self._json_response(data)
             return
 
+        if path == "/api/file":
+            # Serve a file from allowed paths (for generated images)
+            from urllib.parse import parse_qs
+            params = parse_qs(urlparse(self.path).query)
+            file_path = params.get("path", [""])[0]
+            target = Path(file_path).resolve()
+            allowed = [str(VAULT_DIR.resolve()), str(Path("/mnt/e/coding").resolve())]
+            if not any(str(target).startswith(r) for r in allowed):
+                self.send_error(403, "Path not allowed")
+                return
+            if not target.exists():
+                self.send_error(404, "File not found")
+                return
+            try:
+                data = target.read_bytes()
+                self.send_response(200)
+                ext = target.suffix.lower()
+                ct = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "gif": "image/gif"}.get(ext[1:], "application/octet-stream")
+                self.send_header("Content-Type", ct)
+                self.send_header("Content-Length", str(len(data)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(data)
+            except Exception as e:
+                self.send_error(500, str(e))
+            return
+
         if path == "/api/output":
             self._json_response({"output": read_file("output.txt")})
             return

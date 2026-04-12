@@ -2,74 +2,21 @@
 
 import { useState, useCallback, useRef } from "react";
 
-// ─── ComfyUI FLUX Workflow Template ───
-function buildFluxWorkflow(prompt: string) {
-  return {
-    "1": {
-      class_type: "CheckpointLoaderSimple",
-      inputs: {
-        ckpt_name: "flux1-dev-fp8.safetensors",
-      },
-    },
-    "2": {
-      class_type: "CLIPTextEncode",
-      inputs: {
-        text: prompt,
-        clip: ["1", 1],
-      },
-    },
-    "3": {
-      class_type: "CLIPTextEncode",
-      inputs: {
-        text: "",
-        clip: ["1", 1],
-      },
-    },
-    "4": {
-      class_type: "EmptyLatentImage",
-      inputs: {
-        width: 1024,
-        height: 1024,
-        batch_size: 1,
-      },
-    },
-    "5": {
-      class_type: "KSampler",
-      inputs: {
-        seed: Math.floor(Math.random() * 2 ** 32),
-        steps: 20,
-        cfg: 3.5,
-        sampler_name: "euler",
-        scheduler: "normal",
-        denoise: 1.0,
-        model: ["1", 0],
-        positive: ["2", 0],
-        negative: ["3", 0],
-        latent_image: ["4", 0],
-      },
-    },
-    "6": {
-      class_type: "VAEDecode",
-      inputs: {
-        samples: ["5", 0],
-        vae: ["1", 2],
-      },
-    },
-    "7": {
-      class_type: "SaveImage",
-      inputs: {
-        filename_prefix: "jarvis_flux",
-        images: ["6", 0],
-      },
-    },
-  };
-}
-
 // ─── State types ───
 type Stage = "input" | "enhancing" | "enhanced" | "generating" | "done" | "error";
 
+const SIZE_PRESETS: Record<string, { w: number; h: number; label: string }> = {
+  "square":    { w: 1024, h: 1024, label: "Square 1:1" },
+  "instagram": { w: 1080, h: 1080, label: "Instagram Post" },
+  "ig-story":  { w: 1080, h: 1920, label: "IG Story 9:16" },
+  "landscape": { w: 1344, h: 768,  label: "Landscape 16:9" },
+  "portrait":  { w: 768,  h: 1344, label: "Portrait 9:16" },
+  "wide":      { w: 1536, h: 640,  label: "Ultra Wide 21:9" },
+  "poster":    { w: 768,  h: 1152, label: "Poster 2:3" },
+  "banner":    { w: 1536, h: 512,  label: "Banner 3:1" },
+};
+
 const OLLAMA_URL = "http://localhost:11434";
-const COMFYUI_URL = "http://localhost:8188";
 
 const ENHANCE_SYSTEM = `You are an expert image prompt engineer for FLUX AI image generation.
 Rewrite the user's rough description into a detailed, high-quality image generation prompt.
@@ -78,6 +25,7 @@ Keep it under 200 words. Output ONLY the enhanced prompt, nothing else. No expla
 
 export function ImageGenerator() {
   const [userInput, setUserInput] = useState("");
+  const [sizePreset, setSizePreset] = useState("square");
   const [enhancedPrompt, setEnhancedPrompt] = useState("");
   const [stage, setStage] = useState<Stage>("input");
   const [error, setError] = useState("");
@@ -137,151 +85,63 @@ export function ImageGenerator() {
     }
   }, [userInput]);
 
-  // ─── VRAM management + ComfyUI lifecycle ───
-  const swapToMiniModel = async () => {
-    try {
-      // Unload the big model
-      await fetch(`${OLLAMA_URL}/api/generate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: "qwen3:30b-a3b", keep_alive: 0 }),
-      });
-      await new Promise((r) => setTimeout(r, 2000));
-      // Load small model (5GB — fits alongside FLUX fp8)
-      await fetch(`${OLLAMA_URL}/api/generate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: "qwen3:8b", prompt: "", keep_alive: -1 }),
-      });
-    } catch {}
-  };
 
-  const reloadBigModel = async () => {
-    try {
-      // Stop ComfyUI via bridge
-      await fetch("http://localhost:4000/api/input", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: "__exec:pkill -f 'python3 main.py'" }),
-      }).catch(() => {});
-      await new Promise((r) => setTimeout(r, 3000));
-      // Unload mini model
-      await fetch(`${OLLAMA_URL}/api/generate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: "qwen3:8b", keep_alive: 0 }),
-      });
-      await new Promise((r) => setTimeout(r, 2000));
-      // Reload big model
-      await fetch(`${OLLAMA_URL}/api/generate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: "qwen3:30b-a3b", prompt: "", keep_alive: -1 }),
-      });
-    } catch {}
-  };
-
-  // ─── Step 2: Generate image via ComfyUI ───
+  // ─── Step 2: Generate image via FLUX skill (no ComfyUI) ───
   const generateImage = useCallback(async (prompt: string) => {
     setStage("generating");
     setError("");
     setImageUrl("");
-    setProgress("Swapping to mini model...");
+    setProgress("Generating image via FLUX...");
 
     try {
-      // Swap big model for small one — JARVIS stays responsive during generation
-      await swapToMiniModel();
-      setProgress("Queuing workflow...");
-
-      // Submit workflow
-      const workflow = buildFluxWorkflow(prompt);
-      const queueRes = await fetch(`${COMFYUI_URL}/prompt`, {
+      const res = await fetch("/api/generate-image", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: workflow }),
+        body: JSON.stringify({
+          prompt,
+          width: (SIZE_PRESETS[sizePreset] || SIZE_PRESETS.square).w,
+          height: (SIZE_PRESETS[sizePreset] || SIZE_PRESETS.square).h,
+        }),
+        signal: AbortSignal.timeout(300000),
       });
 
-      if (!queueRes.ok) {
-        const errText = await queueRes.text();
-        throw new Error(`ComfyUI queue failed (${queueRes.status}): ${errText.slice(0, 200)}`);
+      const data = await res.json();
+
+      if (data.error) {
+        throw new Error(data.error);
       }
 
-      const { prompt_id } = await queueRes.json();
-      if (!prompt_id) throw new Error("No prompt_id returned from ComfyUI");
+      // Extract image path from response
+      const message = data.message || "";
+      const pathMatch = message.match(/Path:\s*(.+\.png)/);
 
-      setProgress("Generating image...");
-
-      // Poll for completion
-      const controller = new AbortController();
-      abortRef.current = controller;
-
-      let attempts = 0;
-      const maxAttempts = 150; // 5 minutes at 2s intervals
-
-      while (attempts < maxAttempts) {
-        if (controller.signal.aborted) return;
-
-        await new Promise((r) => setTimeout(r, 2000));
-        attempts++;
-
-        const histRes = await fetch(`${COMFYUI_URL}/history/${prompt_id}`, {
-          signal: controller.signal,
-        });
-
-        if (!histRes.ok) continue;
-
-        const history = await histRes.json();
-        const entry = history[prompt_id];
-
-        if (!entry) {
-          setProgress(`Generating image... (${attempts * 2}s)`);
-          continue;
-        }
-
-        if (entry.status?.status_str === "error") {
-          throw new Error("ComfyUI generation failed. Check ComfyUI logs.");
-        }
-
-        // Find output image
-        const outputs = entry.outputs;
-        if (!outputs) continue;
-
-        for (const nodeId of Object.keys(outputs)) {
-          const images = outputs[nodeId]?.images;
-          if (images && images.length > 0) {
-            const img = images[0];
-            const viewUrl = `${COMFYUI_URL}/view?filename=${encodeURIComponent(img.filename)}&subfolder=${encodeURIComponent(img.subfolder || "")}&type=${encodeURIComponent(img.type || "output")}`;
-            setImageUrl(viewUrl);
-            setStage("done");
-            // Speak notification
-            try {
-              await fetch("http://localhost:4000/api/input", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ text: "__tts:Your image is ready, sir. Shall I save it?" }),
-              });
-            } catch {}
-            return;
-          }
-        }
-
-        setProgress(`Generating image... (${attempts * 2}s)`);
+      if (pathMatch) {
+        // Serve image via bridge server
+        const imgPath = pathMatch[1].trim();
+        setImageUrl(`http://localhost:4000/api/file?path=${encodeURIComponent(imgPath)}`);
+        setStage("done");
+        // Speak notification
+        try {
+          await fetch("http://localhost:4000/api/input", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text: "__tts:Your image is ready, sir. Shall I save it?" }),
+          });
+        } catch {}
+      } else {
+        // Generation ran but no clear image path — show message
+        setError(message || "Generation completed but no image found.");
+        setStage("error");
       }
-
-      throw new Error("Generation timed out after 5 minutes");
     } catch (e) {
-      if ((e as Error).name === "AbortError") {
-        await reloadBigModel();
-        return;
+      if ((e as Error).name === "AbortError" || (e as Error).name === "TimeoutError") {
+        setError("Generation timed out after 5 minutes.");
+      } else {
+        setError(
+          `Image generation failed: ${e instanceof Error ? e.message : String(e)}`
+        );
       }
-      setError(
-        e instanceof TypeError
-          ? "Cannot reach ComfyUI at localhost:8188. Is it running?"
-          : `Image generation failed: ${e instanceof Error ? e.message : String(e)}`
-      );
       setStage("error");
-      // Reload Ollama even on error
-      await reloadBigModel();
     }
   }, []);
 
@@ -333,6 +193,18 @@ export function ImageGenerator() {
             placeholder="e.g. image for instagram a kombucha brand called Alchemians with golden liquid in a glass bottle, botanical vibes"
             rows={4}
           />
+
+          <div className="ig-size-row">
+            {Object.entries(SIZE_PRESETS).map(([key, { label }]) => (
+              <button
+                key={key}
+                className={`ig-size-btn ${sizePreset === key ? "active" : ""}`}
+                onClick={() => setSizePreset(key)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
 
           <button
             className="ig-btn ig-btn-primary"
@@ -479,6 +351,34 @@ export function ImageGenerator() {
         }
         .ig-textarea::placeholder {
           color: rgba(255, 255, 255, 0.15);
+        }
+
+        .ig-size-row {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 6px;
+          margin-top: 14px;
+          justify-content: center;
+        }
+        .ig-size-btn {
+          font-size: 8px;
+          letter-spacing: 1px;
+          padding: 4px 10px;
+          background: rgba(255, 255, 255, 0.02);
+          border: 1px solid rgba(255, 255, 255, 0.06);
+          border-radius: 3px;
+          color: rgba(255, 255, 255, 0.3);
+          cursor: pointer;
+          transition: all 0.2s;
+        }
+        .ig-size-btn:hover {
+          color: rgba(255, 255, 255, 0.5);
+          border-color: rgba(255, 255, 255, 0.15);
+        }
+        .ig-size-btn.active {
+          color: var(--accent, #40c8f0);
+          border-color: rgba(64, 200, 240, 0.4);
+          background: rgba(64, 200, 240, 0.08);
         }
 
         .ig-btn {
