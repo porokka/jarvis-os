@@ -257,7 +257,7 @@ class JarvisHandler(http.server.SimpleHTTPRequestHandler):
                     import importlib
                     sys.path.insert(0, str(Path(__file__).parent.parent))
                     flux_mod = importlib.import_module("skills.flux")
-                    result = flux_mod.exec_generate_image(prompt, enhance="yes")
+                    result = flux_mod.exec_generate_image(prompt, enhance="no")
 
                     # Write result to bridge for HUD
                     BRIDGE_DIR.mkdir(parents=True, exist_ok=True)
