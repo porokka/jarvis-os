@@ -261,6 +261,20 @@ class JarvisHandler(http.server.SimpleHTTPRequestHandler):
                     write_file("state.txt", "standby")
                 threading.Thread(target=_speak_tts, daemon=True).start()
                 self._json_response({"status": "ok", "tts": tts_text})
+            elif text.startswith("__exec:"):
+                # Execute safe system command (internal only)
+                cmd = text[7:]
+                # Whitelist: only allow specific commands
+                allowed = ["pkill -f 'python3 main.py'", "pkill -f comfyui"]
+                if cmd in allowed:
+                    import threading
+                    threading.Thread(
+                        target=lambda: subprocess.run(cmd, shell=True, timeout=10, capture_output=True),
+                        daemon=True,
+                    ).start()
+                    self._json_response({"status": "ok", "exec": cmd})
+                else:
+                    self._json_response({"status": "error", "message": "Command not allowed"}, 403)
             elif text.startswith("__"):
                 self._json_response({"status": "ok", "internal": True})
             else:

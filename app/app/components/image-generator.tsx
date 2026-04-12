@@ -131,7 +131,7 @@ export function ImageGenerator() {
     }
   }, [userInput]);
 
-  // ─── VRAM management: swap big model for small one during image gen ───
+  // ─── VRAM management + ComfyUI lifecycle ───
   const swapToMiniModel = async () => {
     try {
       // Unload the big model
@@ -152,13 +152,20 @@ export function ImageGenerator() {
 
   const reloadBigModel = async () => {
     try {
+      // Stop ComfyUI via bridge
+      await fetch("http://localhost:4000/api/input", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: "__exec:pkill -f 'python3 main.py'" }),
+      }).catch(() => {});
+      await new Promise((r) => setTimeout(r, 3000));
       // Unload mini model
       await fetch(`${OLLAMA_URL}/api/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ model: "qwen3:8b", keep_alive: 0 }),
       });
-      await new Promise((r) => setTimeout(r, 1000));
+      await new Promise((r) => setTimeout(r, 2000));
       // Reload big model
       await fetch(`${OLLAMA_URL}/api/generate`, {
         method: "POST",
