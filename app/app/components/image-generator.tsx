@@ -8,7 +8,7 @@ function buildFluxWorkflow(prompt: string) {
     "1": {
       class_type: "CheckpointLoaderSimple",
       inputs: {
-        ckpt_name: "flux1-dev.safetensors",
+        ckpt_name: "flux1-dev-fp8.safetensors",
       },
     },
     "2": {
