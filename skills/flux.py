@@ -60,7 +60,7 @@ def _enhance_prompt(user_prompt: str) -> str:
     )
 
     payload = json.dumps({
-        "model": "qwen3:30b-a3b",
+        "model": "qwen3:8b",
         "prompt": user_prompt,
         "system": system,
         "stream": False,
@@ -86,34 +86,14 @@ def _enhance_prompt(user_prompt: str) -> str:
         return user_prompt
 
 
-def _unload_ollama():
-    """Unload Ollama models to free VRAM."""
+def _ollama_model(model: str, keep_alive: int = -1):
+    """Load or unload an Ollama model."""
     import urllib.request
     try:
         payload = json.dumps({
-            "model": "qwen3:30b-a3b",
-            "keep_alive": 0,
-        }).encode("utf-8")
-        req = urllib.request.Request(
-            f"{OLLAMA_HOST}/api/generate",
-            data=payload,
-            headers={"Content-Type": "application/json"},
-        )
-        urllib.request.urlopen(req, timeout=10)
-        time.sleep(3)
-        print("[FLUX] Ollama unloaded from VRAM")
-    except Exception:
-        pass
-
-
-def _reload_ollama():
-    """Reload Ollama model into VRAM."""
-    import urllib.request
-    try:
-        payload = json.dumps({
-            "model": "qwen3:30b-a3b",
+            "model": model,
             "prompt": "",
-            "keep_alive": -1,
+            "keep_alive": keep_alive,
         }).encode("utf-8")
         req = urllib.request.Request(
             f"{OLLAMA_HOST}/api/generate",
@@ -121,9 +101,26 @@ def _reload_ollama():
             headers={"Content-Type": "application/json"},
         )
         urllib.request.urlopen(req, timeout=30)
-        print("[FLUX] Ollama reloaded")
     except Exception:
         pass
+
+
+def _swap_to_mini():
+    """Swap big model for small one — keeps JARVIS responsive during generation."""
+    print("[FLUX] Swapping to mini model...")
+    _ollama_model("qwen3:30b-a3b", keep_alive=0)
+    time.sleep(2)
+    _ollama_model("qwen3:8b", keep_alive=-1)
+    print("[FLUX] Mini model loaded — JARVIS responsive")
+
+
+def _restore_big():
+    """Restore big model after generation."""
+    print("[FLUX] Restoring big model...")
+    _ollama_model("qwen3:8b", keep_alive=0)
+    time.sleep(2)
+    _ollama_model("qwen3:30b-a3b", keep_alive=-1)
+    print("[FLUX] Big model restored — full power")
 
 
 def exec_generate_image(prompt: str, enhance: str = "yes") -> str:
@@ -138,9 +135,8 @@ def exec_generate_image(prompt: str, enhance: str = "yes") -> str:
     else:
         enhanced = prompt
 
-    # Step 2: Unload Ollama
-    print("[FLUX] Unloading Ollama for VRAM...")
-    _unload_ollama()
+    # Step 2: Swap to mini model
+    _swap_to_mini()
 
     # Step 3: Generate image
     IMAGES_DIR.mkdir(parents=True, exist_ok=True)
@@ -155,6 +151,7 @@ def exec_generate_image(prompt: str, enhance: str = "yes") -> str:
 
     try:
         # Run FLUX via CLI
+        model_path = Path("/mnt/e/models/flux1-dev-fp8.safetensors")
         cmd = [
             "python3", "-m", "flux",
             "--name", f"flux-{model}",
@@ -165,6 +162,9 @@ def exec_generate_image(prompt: str, enhance: str = "yes") -> str:
             "--output_dir", str(IMAGES_DIR),
             "--prompt", enhanced,
         ]
+        # Use local model if available
+        if model_path.exists():
+            cmd.extend(["--local_path", str(model_path)])
 
         print(f"[FLUX] Generating {width}x{height} with {model} ({steps} steps)...")
         result = subprocess.run(
@@ -183,21 +183,21 @@ def exec_generate_image(prompt: str, enhance: str = "yes") -> str:
             images = sorted(IMAGES_DIR.glob("*.png"), key=lambda p: p.stat().st_mtime, reverse=True)
             if images:
                 img_path = images[0]
-                _reload_ollama()
+                _restore_big()
                 return (
                     f"Image generated: {img_path.name}\n"
                     f"Path: {img_path}\n"
                     f"Prompt: {enhanced[:100]}..."
                 )
 
-        _reload_ollama()
+        _restore_big()
         return f"Generation may have failed. Output:\n{output[:500]}"
 
     except subprocess.TimeoutExpired:
-        _reload_ollama()
+        _restore_big()
         return "Image generation timed out (5 minutes)."
     except Exception as e:
-        _reload_ollama()
+        _restore_big()
         return f"FLUX error: {e}"
 
 
