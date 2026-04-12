@@ -1,0 +1,22 @@
+{
+  "anthropic": {
+    "api_key": "sk-ant-...",
+    "model": "claude-sonnet-4-20250514"
+  },
+  "openai": {
+    "api_key": "sk-...",
+    "model": "gpt-4o"
+  },
+  "groq": {
+    "api_key": "gsk_...",
+    "model": "llama-3.3-70b-versatile"
+  },
+  "google": {
+    "api_key": "AIza...",
+    "model": "gemini-2.5-flash"
+  },
+  "openrouter": {
+    "api_key": "sk-or-...",
+    "model": "anthropic/claude-sonnet-4"
+  }
+}
