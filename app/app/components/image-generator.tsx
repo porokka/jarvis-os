@@ -94,11 +94,12 @@ export function ImageGenerator() {
     setEnhancedPrompt("");
 
     try {
+      // Use mini model for enhancement — saves VRAM for FLUX
       const res = await fetch(`${OLLAMA_URL}/api/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: "qwen3:latest",
+          model: "qwen3:8b",
           prompt: userInput,
           system: ENHANCE_SYSTEM,
           stream: false,
@@ -130,22 +131,35 @@ export function ImageGenerator() {
     }
   }, [userInput]);
 
-  // ─── VRAM swap: unload Ollama models before ComfyUI ───
-  const unloadOllama = async () => {
+  // ─── VRAM management: swap big model for small one during image gen ───
+  const swapToMiniModel = async () => {
     try {
-      // Set keepalive to 0 to unload
+      // Unload the big model
       await fetch(`${OLLAMA_URL}/api/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ model: "qwen3:30b-a3b", keep_alive: 0 }),
       });
-      // Wait for VRAM to free
-      await new Promise((r) => setTimeout(r, 3000));
+      await new Promise((r) => setTimeout(r, 2000));
+      // Load small model (5GB — fits alongside FLUX fp8)
+      await fetch(`${OLLAMA_URL}/api/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: "qwen3:8b", prompt: "", keep_alive: -1 }),
+      });
     } catch {}
   };
 
-  const reloadOllama = async () => {
+  const reloadBigModel = async () => {
     try {
+      // Unload mini model
+      await fetch(`${OLLAMA_URL}/api/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: "qwen3:8b", keep_alive: 0 }),
+      });
+      await new Promise((r) => setTimeout(r, 1000));
+      // Reload big model
       await fetch(`${OLLAMA_URL}/api/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -159,11 +173,11 @@ export function ImageGenerator() {
     setStage("generating");
     setError("");
     setImageUrl("");
-    setProgress("Freeing GPU memory...");
+    setProgress("Swapping to mini model...");
 
     try {
-      // Unload Ollama to free VRAM for FLUX
-      await unloadOllama();
+      // Swap big model for small one — JARVIS stays responsive during generation
+      await swapToMiniModel();
       setProgress("Queuing workflow...");
 
       // Submit workflow
@@ -236,7 +250,7 @@ export function ImageGenerator() {
       throw new Error("Generation timed out after 5 minutes");
     } catch (e) {
       if ((e as Error).name === "AbortError") {
-        await reloadOllama();
+        await reloadBigModel();
         return;
       }
       setError(
@@ -246,7 +260,7 @@ export function ImageGenerator() {
       );
       setStage("error");
       // Reload Ollama even on error
-      await reloadOllama();
+      await reloadBigModel();
     }
   }, []);
 
