@@ -130,14 +130,42 @@ export function ImageGenerator() {
     }
   }, [userInput]);
 
+  // ─── VRAM swap: unload Ollama models before ComfyUI ───
+  const unloadOllama = async () => {
+    try {
+      // Set keepalive to 0 to unload
+      await fetch(`${OLLAMA_URL}/api/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: "qwen3:30b-a3b", keep_alive: 0 }),
+      });
+      // Wait for VRAM to free
+      await new Promise((r) => setTimeout(r, 3000));
+    } catch {}
+  };
+
+  const reloadOllama = async () => {
+    try {
+      await fetch(`${OLLAMA_URL}/api/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: "qwen3:30b-a3b", prompt: "", keep_alive: -1 }),
+      });
+    } catch {}
+  };
+
   // ─── Step 2: Generate image via ComfyUI ───
   const generateImage = useCallback(async (prompt: string) => {
     setStage("generating");
     setError("");
     setImageUrl("");
-    setProgress("Queuing workflow...");
+    setProgress("Freeing GPU memory...");
 
     try {
+      // Unload Ollama to free VRAM for FLUX
+      await unloadOllama();
+      setProgress("Queuing workflow...");
+
       // Submit workflow
       const workflow = buildFluxWorkflow(prompt);
       const queueRes = await fetch(`${COMFYUI_URL}/prompt`, {
@@ -207,13 +235,18 @@ export function ImageGenerator() {
 
       throw new Error("Generation timed out after 5 minutes");
     } catch (e) {
-      if ((e as Error).name === "AbortError") return;
+      if ((e as Error).name === "AbortError") {
+        await reloadOllama();
+        return;
+      }
       setError(
         e instanceof TypeError
           ? "Cannot reach ComfyUI at localhost:8188. Is it running?"
           : `Image generation failed: ${e instanceof Error ? e.message : String(e)}`
       );
       setStage("error");
+      // Reload Ollama even on error
+      await reloadOllama();
     }
   }, []);
 
@@ -233,6 +266,8 @@ export function ImageGenerator() {
     a.href = imageUrl;
     a.download = `jarvis_flux_${Date.now()}.png`;
     a.click();
+    // Reload Ollama after done with image gen
+    reloadOllama();
   };
 
   const handleDiscard = () => {
@@ -242,6 +277,8 @@ export function ImageGenerator() {
     setImageUrl("");
     setError("");
     setProgress("");
+    // Reload Ollama
+    reloadOllama();
   };
 
   const handleEditPrompt = () => setStage("enhanced");
