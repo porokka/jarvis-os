@@ -210,8 +210,8 @@ def exec_generate_image(prompt: str, enhance: str = "yes") -> str:
 
         # Fallback: FLUX CLI with local model paths
         env = os.environ.copy()
-        env["FLUX_MODEL"] = "/mnt/e/models/flux1-dev.safetensors"
-        env["HF_TOKEN"] = "hf_placeholder"  # prevent login prompts
+        env["FLUX_MODEL"] = "/mnt/e/models/flux1-dev-fp8.safetensors"
+        env["HF_TOKEN"] = "hf_placeholder"
 
         cmd = [
             "python3", "-m", "flux", "t2i",
@@ -222,7 +222,6 @@ def exec_generate_image(prompt: str, enhance: str = "yes") -> str:
             "--guidance", str(guidance),
             "--output_dir", str(IMAGES_DIR),
             "--prompt", enhanced,
-            "--offload",
         ]
 
         print(f"[FLUX] Generating {width}x{height} with {model} ({steps} steps)...")
