@@ -1,0 +1,9 @@
+{
+  "smtp_host": "smtp.gmail.com",
+  "smtp_port": 587,
+  "imap_host": "imap.gmail.com",
+  "imap_port": 993,
+  "username": "your@gmail.com",
+  "password": "your_app_password",
+  "from_name": "JARVIS"
+}

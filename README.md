@@ -12,13 +12,14 @@ Built by [Sami Porokka](https://poro-it.com) / Poro-IT OÜ
 
 - **Multi-Model Routing** — Queries routed to the best local model (fast / reason / code / deep / cloud)
 - **ReAct Agent Loop** — Think → Tool → Observe → Repeat until task complete
-- **Modular Skills** — 17 plug-and-play skill modules with 30+ tools, enable/disable via config
+- **Modular Skills** — 20 plug-and-play skill modules with 35+ tools, enable/disable via config
 - **Voice I/O** — Wake word "Hey JARVIS", Whisper STT, Orpheus TTS with 5.1 center-channel output
 - **Persistent Memory** — [MemPalace](https://github.com/milla-jovovich/mempalace) vector DB + Obsidian vault (2000+ memories)
 - **Stark Industries HUD** — Next.js holographic dashboard with GPU monitor, live system log
 - **Home Automation** — Denon AVR, NVIDIA Shield, LG TV, Panasonic Blu-ray, Philips Hue, internet radio
 - **Cloud LLMs** — Claude, GPT-4, Gemini, Groq, Mistral, OpenRouter via unified API skill
 - **AI Image Gen** — FLUX text-to-image with Qwen3 prompt enhancement + VRAM auto-swap
+- **Phone Assistant** — Answer calls, take messages, send SMS, read/send email via Twilio
 - **34 Claude Skills** — Frontend design, SEO, Playwright, React, and more loaded on demand
 
 ---
@@ -75,6 +76,9 @@ JARVIS uses a modular skill system. Each skill is a self-contained Python module
 | **plex** | `plex` | Plex Media Server — browse, search, playback control | [Guide](docs/skills/plex.md) |
 | **hue** | `hue` | Philips Hue lighting — on/off, brightness, colors, scenes | [Guide](docs/skills/hue.md) |
 | **cloud_llm** | `cloud_llm` | Cloud LLM APIs — Claude, GPT-4, Gemini, Groq, Mistral | [Guide](docs/skills/cloud_llm.md) |
+| **phone** | `phone` | Phone calls via Twilio — make/receive calls, voicemail | [Guide](docs/skills/phone.md) |
+| **sms** | `sms` | SMS text messages via Twilio | [Guide](docs/skills/sms.md) |
+| **email** | `email` | Email — send, inbox, search via SMTP/IMAP | [Guide](docs/skills/email.md) |
 
 **Full skill system documentation:** [docs/SKILLS.md](docs/SKILLS.md)
 

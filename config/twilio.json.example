@@ -1,0 +1,6 @@
+{
+  "account_sid": "ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "auth_token": "your_auth_token",
+  "phone_number": "+1234567890",
+  "greeting": "Hello, this is JARVIS. How may I assist you?"
+}
