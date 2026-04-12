@@ -94,12 +94,12 @@ export function ImageGenerator() {
     setEnhancedPrompt("");
 
     try {
-      // Use mini model for enhancement — saves VRAM for FLUX
+      // Enhance with big model (still loaded), swap happens at generate step
       const res = await fetch(`${OLLAMA_URL}/api/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: "qwen3:8b",
+          model: "qwen3:30b-a3b",
           prompt: userInput,
           system: ENHANCE_SYSTEM,
           stream: false,

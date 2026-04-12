@@ -60,7 +60,7 @@ def _enhance_prompt(user_prompt: str) -> str:
     )
 
     payload = json.dumps({
-        "model": "qwen3:8b",
+        "model": "qwen3:30b-a3b",
         "prompt": user_prompt,
         "system": system,
         "stream": False,
