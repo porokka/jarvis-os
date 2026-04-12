@@ -80,9 +80,7 @@ def _enhance_prompt(user_prompt: str) -> str:
         if "<think>" in enhanced:
             import re
             enhanced = re.sub(r'<think>.*?</think>', '', enhanced, flags=re.DOTALL).strip()
-        # Fallback to thinking field
-        if not enhanced and data.get("thinking"):
-            enhanced = data["thinking"].strip()
+        # If still empty after stripping thinking, use original prompt
         return enhanced or user_prompt
     except Exception as e:
         print(f"[FLUX] Prompt enhancement failed: {e}")
@@ -139,11 +137,8 @@ def exec_generate_image(prompt: str, enhance: str = "yes") -> str:
     else:
         enhanced = prompt
 
-    # Step 2: Unload ALL Ollama models — ComfyUI needs max VRAM
-    print("[FLUX] Unloading Ollama completely for VRAM...")
-    _ollama_model("qwen3:30b-a3b", keep_alive=0)
-    _ollama_model("qwen3:8b", keep_alive=0)
-    time.sleep(3)
+    # Step 2: Swap big model for mini — JARVIS stays responsive during generation
+    _swap_to_mini()
 
     # Step 3: Generate image
     IMAGES_DIR.mkdir(parents=True, exist_ok=True)

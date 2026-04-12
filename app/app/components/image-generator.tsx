@@ -66,12 +66,8 @@ export function ImageGenerator() {
         enhanced = enhanced.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
       }
 
-      // If response empty, use thinking field (Qwen3 thinking mode)
-      if (!enhanced && data.thinking) {
-        enhanced = data.thinking.trim();
-      }
-
-      if (!enhanced) throw new Error("Empty response from Ollama");
+      // Don't use thinking field — it's internal reasoning, not a prompt
+      if (!enhanced) throw new Error("Empty response from Ollama. Try again.");
 
       setEnhancedPrompt(enhanced);
       setStage("enhanced");
