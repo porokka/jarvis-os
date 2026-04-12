@@ -240,6 +240,14 @@ export function ImageGenerator() {
             const viewUrl = `${COMFYUI_URL}/view?filename=${encodeURIComponent(img.filename)}&subfolder=${encodeURIComponent(img.subfolder || "")}&type=${encodeURIComponent(img.type || "output")}`;
             setImageUrl(viewUrl);
             setStage("done");
+            // Speak notification
+            try {
+              await fetch("http://localhost:4000/api/input", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ text: "__tts:Your image is ready, sir. Shall I save it?" }),
+              });
+            } catch {}
             return;
           }
         }

@@ -239,6 +239,28 @@ class JarvisHandler(http.server.SimpleHTTPRequestHandler):
             if text and not text.startswith("__"):
                 write_file("input.txt", text)
                 self._json_response({"status": "ok", "input": text})
+            elif text.startswith("__tts:"):
+                # Speak without processing as command
+                tts_text = text[6:]
+                write_file("output.txt", tts_text)
+                write_file("state.txt", "speaking")
+                import threading
+                def _speak_tts():
+                    try:
+                        safe = tts_text.replace("'", "''")
+                        ps = "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
+                        subprocess.run(
+                            [ps, "-Command",
+                             f"Add-Type -AssemblyName System.Speech; "
+                             f"$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
+                             f"$s.Rate = 1; $s.Speak('{safe}')"],
+                            timeout=15, capture_output=True,
+                        )
+                    except Exception:
+                        pass
+                    write_file("state.txt", "standby")
+                threading.Thread(target=_speak_tts, daemon=True).start()
+                self._json_response({"status": "ok", "tts": tts_text})
             elif text.startswith("__"):
                 self._json_response({"status": "ok", "internal": True})
             else:
