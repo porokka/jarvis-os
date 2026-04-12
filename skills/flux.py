@@ -154,9 +154,8 @@ def exec_generate_image(prompt: str, enhance: str = "yes") -> str:
 
     try:
         # Run FLUX via CLI
-        model_path = Path("/mnt/e/models/flux1-dev-fp8.safetensors")
         cmd = [
-            "python3", "-m", "flux",
+            "python3", "-m", "flux", "t2i",
             "--name", f"flux-{model}",
             "--width", str(width),
             "--height", str(height),
@@ -164,10 +163,8 @@ def exec_generate_image(prompt: str, enhance: str = "yes") -> str:
             "--guidance", str(guidance),
             "--output_dir", str(IMAGES_DIR),
             "--prompt", enhanced,
+            "--offload",
         ]
-        # Use local model if available
-        if model_path.exists():
-            cmd.extend(["--local_path", str(model_path)])
 
         print(f"[FLUX] Generating {width}x{height} with {model} ({steps} steps)...")
         result = subprocess.run(
