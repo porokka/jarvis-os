@@ -145,10 +145,10 @@ def exec_generate_image(prompt: str, enhance: str = "yes") -> str:
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_path = IMAGES_DIR / f"flux_{ts}.png"
 
-    model = cfg.get("model", "schnell")
+    model = cfg.get("model", "dev")
     width = cfg.get("width", 1024)
     height = cfg.get("height", 1024)
-    steps = cfg.get("steps", 4)
+    steps = cfg.get("steps", 20)
     guidance = cfg.get("guidance", 3.5)
 
     try:
