@@ -125,25 +125,66 @@ def _restore_big():
     print("[FLUX] Big model restored — full power")
 
 
+def _start_comfyui_if_needed():
+    """Start ComfyUI in background. Returns True if ready or starting."""
+    import urllib.request as _ur
+    try:
+        _ur.urlopen("http://localhost:8188/system_stats", timeout=2)
+        print("[FLUX] ComfyUI already running")
+        return True
+    except Exception:
+        print("[FLUX] Starting ComfyUI in background...")
+        # Swap to mini model first to free VRAM
+        _swap_to_mini()
+        subprocess.Popen(
+            ["python3", "main.py", "--listen", "0.0.0.0", "--port", "8188"],
+            cwd="/mnt/e/coding/ComfyUI",
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        return False
+
+
+def _wait_for_comfyui(timeout_secs: int = 60) -> bool:
+    """Wait for ComfyUI to be ready."""
+    import urllib.request as _ur
+    for _ in range(timeout_secs // 2):
+        try:
+            _ur.urlopen("http://localhost:8188/system_stats", timeout=2)
+            print("[FLUX] ComfyUI ready")
+            return True
+        except Exception:
+            time.sleep(2)
+    return False
+
+
 def exec_generate_image(prompt: str, enhance: str = "yes") -> str:
     """Generate an image using FLUX."""
     cfg = _load_config()
+    import urllib.request as _ur
 
-    # Step 1: Enhance prompt
+    # Step 1: Start ComfyUI IMMEDIATELY (parallel with enhance)
+    comfyui_was_running = _start_comfyui_if_needed()
+
+    # Step 2: Enhance prompt (runs while ComfyUI boots)
     if enhance.lower() in ("yes", "true", "1", ""):
-        print(f"[FLUX] Enhancing prompt: {prompt[:50]}...")
+        print(f"[FLUX] Enhancing prompt (ComfyUI loading in parallel)...")
         enhanced = _enhance_prompt(prompt)
         print(f"[FLUX] Enhanced: {enhanced[:80]}...")
     else:
         enhanced = prompt
 
-    # Step 2: Swap big model for mini — JARVIS stays responsive during generation
-    _swap_to_mini()
+    # Step 3: If ComfyUI wasn't running, swap models now (enhance used big model)
+    if not comfyui_was_running:
+        _swap_to_mini()
 
-    # Step 3: Generate image
+    # Step 4: Wait for ComfyUI to be ready
+    if not _wait_for_comfyui(60):
+        _restore_big()
+        return "ComfyUI failed to start."
+
+    # Step 5: Generate image
     IMAGES_DIR.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_path = IMAGES_DIR / f"flux_{ts}.png"
 
     model = cfg.get("model", "dev")
     width = cfg.get("width", 1024)
@@ -152,31 +193,6 @@ def exec_generate_image(prompt: str, enhance: str = "yes") -> str:
     guidance = cfg.get("guidance", 3.5)
 
     try:
-        import urllib.request as _ur
-
-        # Auto-start ComfyUI if not running
-        try:
-            _ur.urlopen("http://localhost:8188/system_stats", timeout=2)
-            print("[FLUX] ComfyUI already running")
-        except Exception:
-            print("[FLUX] Starting ComfyUI...")
-            subprocess.Popen(
-                ["python3", "main.py", "--listen", "0.0.0.0", "--port", "8188"],
-                cwd="/mnt/e/coding/ComfyUI",
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            )
-            # Wait for startup
-            for _ in range(30):
-                time.sleep(2)
-                try:
-                    _ur.urlopen("http://localhost:8188/system_stats", timeout=2)
-                    print("[FLUX] ComfyUI ready")
-                    break
-                except Exception:
-                    pass
-            else:
-                _restore_big()
-                return "ComfyUI failed to start. Check if it's installed at /mnt/e/coding/ComfyUI"
 
         # Generate via ComfyUI API with fp8 model
         print("[FLUX] Generating via ComfyUI")
