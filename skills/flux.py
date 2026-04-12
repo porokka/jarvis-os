@@ -197,17 +197,51 @@ def exec_generate_image(prompt: str, enhance: str = "yes") -> str:
         # Generate via ComfyUI API with fp8 model
         print("[FLUX] Generating via ComfyUI")
         import random
+        seed = random.randint(0, 2**32)
         workflow = {
-            "1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "flux1-dev-fp8.safetensors"}},
-            "2": {"class_type": "CLIPTextEncode", "inputs": {"text": enhanced, "clip": ["1", 1]}},
-            "3": {"class_type": "CLIPTextEncode", "inputs": {"text": "", "clip": ["1", 1]}},
-            "4": {"class_type": "EmptyLatentImage", "inputs": {"width": width, "height": height, "batch_size": 1}},
+            # Load FLUX model components separately
+            "1": {"class_type": "CheckpointLoaderSimple", "inputs": {
+                "ckpt_name": "flux1-dev-fp8.safetensors"
+            }},
+            # FLUX uses CLIPTextEncode with conditioning
+            "2": {"class_type": "CLIPTextEncode", "inputs": {
+                "text": enhanced,
+                "clip": ["1", 1]
+            }},
+            # Empty negative for FLUX (cfg=1 means no negative needed)
+            "3": {"class_type": "CLIPTextEncode", "inputs": {
+                "text": "",
+                "clip": ["1", 1]
+            }},
+            # Latent image
+            "4": {"class_type": "EmptyLatentImage", "inputs": {
+                "width": width,
+                "height": height,
+                "batch_size": 1
+            }},
+            # FLUX sampler — use cfg=1 and guidance_scale via FluxGuidance if available
             "5": {"class_type": "KSampler", "inputs": {
-                "seed": random.randint(0, 2**32), "steps": steps, "cfg": guidance,
-                "sampler_name": "euler", "scheduler": "normal", "denoise": 1.0,
-                "model": ["1", 0], "positive": ["2", 0], "negative": ["3", 0], "latent_image": ["4", 0]}},
-            "6": {"class_type": "VAEDecode", "inputs": {"samples": ["5", 0], "vae": ["1", 2]}},
-            "7": {"class_type": "SaveImage", "inputs": {"filename_prefix": f"jarvis_flux_{ts}", "images": ["6", 0]}},
+                "seed": seed,
+                "steps": steps,
+                "cfg": 1.0,
+                "sampler_name": "euler",
+                "scheduler": "simple",
+                "denoise": 1.0,
+                "model": ["1", 0],
+                "positive": ["2", 0],
+                "negative": ["3", 0],
+                "latent_image": ["4", 0]
+            }},
+            # Decode
+            "6": {"class_type": "VAEDecode", "inputs": {
+                "samples": ["5", 0],
+                "vae": ["1", 2]
+            }},
+            # Save
+            "7": {"class_type": "SaveImage", "inputs": {
+                "filename_prefix": f"jarvis_flux_{ts}",
+                "images": ["6", 0]
+            }},
         }
         payload = json.dumps({"prompt": workflow}).encode("utf-8")
         req = _ur.Request("http://localhost:8188/prompt", data=payload,
