@@ -26,29 +26,7 @@ Built by [Sami Porokka](https://poro-it.com) / Poro-IT OÜ
 
 ## Architecture
 
-```
-Voice / Browser / Text
-        │
-   ┌────▼────┐
-   │ Watcher  │──── input.txt ──── server.py (:4000)
-   └────┬────┘                     Browser UI
-        │
-   ┌────▼────────┐
-   �� Router       │ Keywords → fast / reason / code / deep / claude
-   └────┬────────┘
-        │
-   ┌────▼──────────────┐
-   │ ReAct Server :7900 │ Tool-augmented Ollama proxy
-   │  ├ Planner (8b)    │ Picks which tools are needed
-   │  ├ Skill Loader    │ Loads skills/*.py dynamically
-   │  └ Loop (max 5)    │ Repeat until final answer
-   └────┬──────────────┘
-        │
-   ┌────▼────┐    ┌──────────┐
-   │ Ollama   │    │ Claude   │
-   │ :11434   │    │ --print  │
-   └─────────┘    └────��─────┘
-```
+![JARVIS Architecture](https://www.poro-it.com/jarvis-architecture.png)
 
 ---
 
