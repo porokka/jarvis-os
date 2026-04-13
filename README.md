@@ -7,6 +7,9 @@ Built by [Sami Porokka](https://poro-it.com) / Poro-IT OÜ
 ---
 
 ![JARVIS HUD](docs/images/hud.png)
+## Article
+
+[I Built a Local AI Operating System Over Easter Weekend](https://dev.to/porokka/i-built-a-local-ai-operating-system-over-easter-weekend-5b6j) — dev.to
 
 ## Features
 
