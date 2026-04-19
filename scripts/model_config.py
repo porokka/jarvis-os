@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-MODEL_CONFIG_PATH = PROJECT_ROOT / "model-config.json"
+MODEL_CONFIG_PATH = PROJECT_ROOT / "config/models-config.json"
 
 DEFAULT_MODELS = {
     "fast": "qwen3:8b",
@@ -15,15 +15,32 @@ DEFAULT_MODELS = {
 }
 
 DEFAULT_PLANNER_MODEL = "qwen3:14b"
-
+def append_log(line: str) -> None:
+    try:
+        ensure_dirs()
+        with open(VAULT_DIR / "jarvis.log", "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except Exception:
+        pass
+    
 
 def load_model_config() -> Dict[str, Any]:
     if not MODEL_CONFIG_PATH.exists():
+        append_log(f"[MODEL_CONFIG] File not found: {MODEL_CONFIG_PATH}")
         return {}
 
     try:
-        return json.loads(MODEL_CONFIG_PATH.read_text(encoding="utf-8"))
-    except Exception:
+        raw = MODEL_CONFIG_PATH.read_text(encoding="utf-8")
+        cfg = json.loads(raw)
+
+        append_log(f"[MODEL_CONFIG] Loaded config successfully")
+        append_log(f"[MODEL_CONFIG] Models: {cfg.get('models', {})}")
+        append_log(f"[MODEL_CONFIG] Planner: {cfg.get('planner_model')}")
+
+        return cfg
+
+    except Exception as e:
+        append_log(f"[MODEL_CONFIG] ERROR loading config: {e}")
         return {}
 
 
@@ -63,13 +80,24 @@ def resolve_model(
     route: Optional[str] = None,
     skill_name: Optional[str] = None,
 ) -> str:
+    append_log(
+        f"[MODEL_RESOLVE] requested={requested_model} route={route} skill={skill_name}"
+    )
+
     if requested_model:
+        append_log(f"[MODEL_RESOLVE] Using requested_model={requested_model}")
         return requested_model
 
     if skill_name:
-        return get_model_for_skill(skill_name, fallback_route=route or "reason")
+        model = get_model_for_skill(skill_name, fallback_route=route or "reason")
+        append_log(f"[MODEL_RESOLVE] Using skill model={model}")
+        return model
 
     if route:
-        return get_model_for_route(route)
+        model = get_model_for_route(route)
+        append_log(f"[MODEL_RESOLVE] Using route model={model}")
+        return model
 
-    return get_model_for_route("reason")
+    model = get_model_for_route("reason")
+    append_log(f"[MODEL_RESOLVE] Using default model={model}")
+    return model

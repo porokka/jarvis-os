@@ -1,12 +1,8 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 interface Settings {
-  fastModel: string;
-  reasonModel: string;
-  codeModel: string;
-  deepModel: string;
   personality: string;
   voice: string;
   ttsEngine: string;
@@ -14,19 +10,20 @@ interface Settings {
   wakeWord: boolean;
 }
 
-const MODEL_OPTIONS = [
-  "qwen3:4b", "qwen3:8b", "qwen3:14b", "qwen3:30b-a3b", "qwen3:32b",
-  "qwen3-coder:14b", "qwen3-coder:30b",
-  "phi4:14b", "gemma3:12b", "mistral-nemo", "mistral-small:24b",
-  "llama3.1:8b", "llama3.1:70b",
-];
+interface ProfileOption {
+  id: string;
+  label: string;
+  description?: string;
+  voicePreferred?: string;
+}
 
-const PERSONALITIES = [
-  { id: "jarvis", label: "J.A.R.V.I.S (British butler)" },
-  { id: "friday", label: "F.R.I.D.A.Y (Casual)" },
-  { id: "edith", label: "E.D.I.T.H (Tactical)" },
-  { id: "hal", label: "HAL 9000 (Unsettling)" },
-];
+const DEFAULT_SETTINGS: Settings = {
+  personality: "jarvis",
+  voice: "tara",
+  ttsEngine: "system",
+  audioOutput: "default",
+  wakeWord: true,
+};
 
 const VOICES = ["tara", "leah", "jess", "leo", "dan", "mia", "zac", "zoe"];
 
@@ -36,38 +33,107 @@ const TTS_ENGINES = [
   { id: "browser", label: "Browser Speech Synthesis" },
 ];
 
-export function SettingsPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const [settings, setSettings] = useState<Settings>({
-    fastModel: "qwen3:8b",
-    reasonModel: "qwen3:30b-a3b",
-    codeModel: "qwen3-coder:30b",
-    deepModel: "qwen3:30b-a3b",
-    personality: "jarvis",
-    voice: "tara",
-    ttsEngine: "system",
-    audioOutput: "default",
-    wakeWord: true,
-  });
+export function SettingsPanel({
+  open,
+  onClose,
+}: {
+  open: boolean;
+  onClose: () => void;
+}) {
+  const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [saved, setSaved] = useState(false);
   const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([]);
+  const [profiles, setProfiles] = useState<ProfileOption[]>([]);
+  const [profilesLoading, setProfilesLoading] = useState(true);
 
-  // Load saved settings
   useEffect(() => {
     try {
-      const s = localStorage.getItem("jarvis-settings");
-      if (s) setSettings(JSON.parse(s));
-    } catch {}
+      const raw = localStorage.getItem("jarvis-settings");
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        setSettings({
+          personality:
+            typeof parsed?.personality === "string"
+              ? parsed.personality
+              : DEFAULT_SETTINGS.personality,
+          voice:
+            typeof parsed?.voice === "string"
+              ? parsed.voice
+              : DEFAULT_SETTINGS.voice,
+          ttsEngine:
+            typeof parsed?.ttsEngine === "string"
+              ? parsed.ttsEngine
+              : DEFAULT_SETTINGS.ttsEngine,
+          audioOutput:
+            typeof parsed?.audioOutput === "string"
+              ? parsed.audioOutput
+              : DEFAULT_SETTINGS.audioOutput,
+          wakeWord:
+            typeof parsed?.wakeWord === "boolean"
+              ? parsed.wakeWord
+              : DEFAULT_SETTINGS.wakeWord,
+        });
+      }
+    } catch {
+      // ignore bad localStorage
+    }
 
-    // Get audio output devices
-    navigator.mediaDevices?.enumerateDevices().then(devices => {
-      setAudioDevices(devices.filter(d => d.kind === "audiooutput"));
-    }).catch(() => {});
+    navigator.mediaDevices
+      ?.enumerateDevices()
+      .then((devices) => {
+        setAudioDevices(devices.filter((d) => d.kind === "audiooutput"));
+      })
+      .catch(() => {});
+
+    fetch("/api/profiles")
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`Failed to load profiles: ${res.status}`);
+        return res.json();
+      })
+      .then((data: unknown) => {
+        if (!Array.isArray(data)) {
+          setProfiles([]);
+          return;
+        }
+
+        const normalized: ProfileOption[] = data
+          .map((item: any) => ({
+            id: typeof item?.id === "string" ? item.id : "",
+            label: typeof item?.label === "string" ? item.label : "",
+            description:
+              typeof item?.description === "string" ? item.description : undefined,
+            voicePreferred:
+              typeof item?.voicePreferred === "string"
+                ? item.voicePreferred
+                : undefined,
+          }))
+          .filter((p) => p.id && p.label);
+
+        setProfiles(normalized);
+      })
+      .catch(() => {
+        setProfiles([]);
+      })
+      .finally(() => {
+        setProfilesLoading(false);
+      });
   }, []);
+
+  useEffect(() => {
+    if (profiles.length === 0) return;
+
+    const exists = profiles.some((p) => p.id === settings.personality);
+    if (!exists) {
+      setSettings((prev) => ({
+        ...prev,
+        personality: profiles[0].id,
+      }));
+    }
+  }, [profiles, settings.personality]);
 
   function save() {
     localStorage.setItem("jarvis-settings", JSON.stringify(settings));
 
-    // Send to bridge server
     fetch("/api/settings", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -79,86 +145,115 @@ export function SettingsPanel({ open, onClose }: { open: boolean; onClose: () =>
   }
 
   function update<K extends keyof Settings>(key: K, value: Settings[K]) {
-    setSettings(prev => ({ ...prev, [key]: value }));
+    setSettings((prev) => ({ ...prev, [key]: value }));
   }
+
+  function updatePersonality(personality: string) {
+    const selected = profiles.find((p) => p.id === personality);
+
+    setSettings((prev) => ({
+      ...prev,
+      personality,
+      voice: selected?.voicePreferred ?? prev.voice,
+    }));
+  }
+
+  const selectedProfile = useMemo(
+    () => profiles.find((p) => p.id === settings.personality),
+    [profiles, settings.personality]
+  );
 
   if (!open) return null;
 
   return (
     <div className="settings-overlay" onClick={onClose}>
-      <div className="settings-panel" onClick={e => e.stopPropagation()}>
+      <div className="settings-panel" onClick={(e) => e.stopPropagation()}>
         <div className="settings-header">
           <span>SYSTEM CONFIGURATION</span>
-          <button className="settings-close" onClick={onClose}>ESC</button>
+          <button className="settings-close" onClick={onClose}>
+            ESC
+          </button>
         </div>
 
         <div className="settings-body">
-          {/* Models */}
           <div className="settings-section">
-            <div className="section-title">AI MODELS</div>
-            <SettingRow label="Fast (chat)">
-              <ModelSelect value={settings.fastModel} onChange={v => update("fastModel", v)} />
-            </SettingRow>
-            <SettingRow label="Reason (analysis)">
-              <ModelSelect value={settings.reasonModel} onChange={v => update("reasonModel", v)} />
-            </SettingRow>
-            <SettingRow label="Code (programming)">
-              <ModelSelect value={settings.codeModel} onChange={v => update("codeModel", v)} />
-            </SettingRow>
-            <SettingRow label="Deep (strategy)">
-              <ModelSelect value={settings.deepModel} onChange={v => update("deepModel", v)} />
-            </SettingRow>
-          </div>
-
-          {/* Personality */}
-          <div className="settings-section">
-            <div className="section-title">PERSONALITY</div>
+            <div className="section-title">PROFILE</div>
             <SettingRow label="Character">
-              <select
-                value={settings.personality}
-                onChange={e => update("personality", e.target.value)}
-                className="setting-select"
-              >
-                {PERSONALITIES.map(p => (
-                  <option key={p.id} value={p.id}>{p.label}</option>
-                ))}
-              </select>
+              <div>
+                <select
+                  value={settings.personality}
+                  onChange={(e) => updatePersonality(e.target.value)}
+                  className="setting-select"
+                  disabled={profilesLoading || profiles.length === 0}
+                >
+                  {profilesLoading ? (
+                    <option value={settings.personality}>Loading profiles...</option>
+                  ) : profiles.length === 0 ? (
+                    <option value={settings.personality}>No profiles found</option>
+                  ) : (
+                    profiles.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.label}
+                      </option>
+                    ))
+                  )}
+                </select>
+
+                {selectedProfile?.description && (
+                  <div
+                    style={{
+                      fontSize: 10,
+                      opacity: 0.55,
+                      marginTop: 6,
+                      lineHeight: 1.35,
+                    }}
+                  >
+                    {selectedProfile.description}
+                  </div>
+                )}
+              </div>
             </SettingRow>
           </div>
 
-          {/* Voice */}
           <div className="settings-section">
             <div className="section-title">VOICE OUTPUT</div>
+
             <SettingRow label="TTS Engine">
               <select
                 value={settings.ttsEngine}
-                onChange={e => update("ttsEngine", e.target.value)}
+                onChange={(e) => update("ttsEngine", e.target.value)}
                 className="setting-select"
               >
-                {TTS_ENGINES.map(t => (
-                  <option key={t.id} value={t.id}>{t.label}</option>
+                {TTS_ENGINES.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.label}
+                  </option>
                 ))}
               </select>
             </SettingRow>
-            <SettingRow label="Orpheus Voice">
+
+            <SettingRow label="Voice">
               <select
                 value={settings.voice}
-                onChange={e => update("voice", e.target.value)}
+                onChange={(e) => update("voice", e.target.value)}
                 className="setting-select"
               >
-                {VOICES.map(v => (
-                  <option key={v} value={v}>{v}</option>
+                {VOICES.map((v) => (
+                  <option key={v} value={v}>
+                    {v}
+                  </option>
                 ))}
               </select>
             </SettingRow>
+
             <SettingRow label="Audio Output">
               <select
                 value={settings.audioOutput}
-                onChange={e => update("audioOutput", e.target.value)}
+                onChange={(e) => update("audioOutput", e.target.value)}
                 className="setting-select"
               >
                 <option value="default">System Default</option>
-                {audioDevices.map(d => (
+                {audioDevices.map((d) => (
                   <option key={d.deviceId} value={d.deviceId}>
                     {d.label || `Device ${d.deviceId.slice(0, 8)}`}
                   </option>
@@ -167,7 +262,6 @@ export function SettingsPanel({ open, onClose }: { open: boolean; onClose: () =>
             </SettingRow>
           </div>
 
-          {/* Voice Input */}
           <div className="settings-section">
             <div className="section-title">VOICE INPUT</div>
             <SettingRow label="Wake Word Mode">
@@ -175,7 +269,7 @@ export function SettingsPanel({ open, onClose }: { open: boolean; onClose: () =>
                 <input
                   type="checkbox"
                   checked={settings.wakeWord}
-                  onChange={e => update("wakeWord", e.target.checked)}
+                  onChange={(e) => update("wakeWord", e.target.checked)}
                 />
                 <span className="toggle-slider" />
               </label>
@@ -232,14 +326,20 @@ export function SettingsPanel({ open, onClose }: { open: boolean; onClose: () =>
           letter-spacing: 1px;
           cursor: pointer;
         }
-        .settings-close:hover { color: rgba(255, 255, 255, 0.7); }
+        .settings-close:hover {
+          color: rgba(255, 255, 255, 0.7);
+        }
         .settings-body {
           flex: 1;
           overflow-y: auto;
           padding: 12px 18px;
         }
-        .settings-body::-webkit-scrollbar { width: 2px; }
-        .settings-body::-webkit-scrollbar-thumb { background: rgba(64, 160, 240, 0.2); }
+        .settings-body::-webkit-scrollbar {
+          width: 2px;
+        }
+        .settings-body::-webkit-scrollbar-thumb {
+          background: rgba(64, 160, 240, 0.2);
+        }
         .settings-section {
           margin-bottom: 16px;
         }
@@ -282,15 +382,25 @@ export function SettingsPanel({ open, onClose }: { open: boolean; onClose: () =>
           font-size: 11px;
           outline: none;
         }
-        .setting-select:focus { border-color: rgba(64, 160, 240, 0.3); }
-        .setting-select option { background: #0a0a14; }
+        .setting-select:focus {
+          border-color: rgba(64, 160, 240, 0.3);
+        }
+        .setting-select:disabled {
+          opacity: 0.6;
+          cursor: not-allowed;
+        }
+        .setting-select option {
+          background: #0a0a14;
+        }
         .toggle {
           position: relative;
           display: inline-block;
           width: 36px;
           height: 18px;
         }
-        .toggle input { display: none; }
+        .toggle input {
+          display: none;
+        }
         .toggle-slider {
           position: absolute;
           inset: 0;
@@ -300,7 +410,7 @@ export function SettingsPanel({ open, onClose }: { open: boolean; onClose: () =>
           transition: 0.2s;
         }
         .toggle-slider::before {
-          content: '';
+          content: "";
           position: absolute;
           width: 14px;
           height: 14px;
@@ -322,26 +432,25 @@ export function SettingsPanel({ open, onClose }: { open: boolean; onClose: () =>
   );
 }
 
-function SettingRow({ label, children }: { label: string; children: React.ReactNode }) {
+function SettingRow({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
   return (
-    <div style={{
-      display: "flex",
-      justifyContent: "space-between",
-      alignItems: "center",
-      padding: "6px 0",
-    }}>
-      <span style={{ fontSize: 11, opacity: 0.5 }}>{label}</span>
+    <div
+      style={{
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "flex-start",
+        padding: "6px 0",
+        gap: 12,
+      }}
+    >
+      <span style={{ fontSize: 11, opacity: 0.5, paddingTop: 6 }}>{label}</span>
       <div style={{ width: "55%" }}>{children}</div>
     </div>
-  );
-}
-
-function ModelSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  return (
-    <select value={value} onChange={e => onChange(e.target.value)} className="setting-select">
-      {MODEL_OPTIONS.map(m => (
-        <option key={m} value={m}>{m}</option>
-      ))}
-    </select>
   );
 }

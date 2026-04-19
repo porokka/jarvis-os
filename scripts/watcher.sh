@@ -1,83 +1,178 @@
 #!/bin/bash
 # ============================================================
 # JARVIS Watcher — The Nervous System
-# 4-way router: mistral-nemo | qwen3-coder | qwen3:30b-a3b | llama3.1:70b | claude
-# TTS: Orpheus server → PowerShell Windows audio → espeak fallback
+# Route-aware watcher using shared model-config.json
+# Profile-aware personality loading via active_profile.json
 # ============================================================
+
+set -u
 
 # Kill any existing watcher before starting
 for pid in $(pgrep -f 'watcher.sh' | grep -v $$); do
   kill -9 "$pid" 2>/dev/null
 done
 
-JARVIS_DIR="/mnt/d/Jarvis_vault"
-BRIDGE="/tmp/jarvis"
-INPUT="$BRIDGE/input.txt"
-OUTPUT="$BRIDGE/output.txt"
-STATE="$BRIDGE/state.txt"
-LAST_INPUT="$BRIDGE/last_input.txt"
-BRAIN="$BRIDGE/brain.txt"
-EMOTION="$BRIDGE/emotion.txt"
-LOG="$JARVIS_DIR/jarvis.log"
-PERSONALITY="$JARVIS_DIR/JARVIS.md"
-HISTORY="$BRIDGE/conversation.md"
-AUDIO_OUT="$JARVIS_DIR/tts/last_speech.wav"
+PROJECT_DIR="/mnt/e/coding/jarvis-os"
+VAULT_DIR="/mnt/d/Jarvis_vault"
+BRIDGE_DIR="/tmp/jarvis"
+
+INPUT="$BRIDGE_DIR/input.txt"
+OUTPUT="$BRIDGE_DIR/output.txt"
+STATE="$BRIDGE_DIR/state.txt"
+LAST_INPUT="$BRIDGE_DIR/last_input.txt"
+BRAIN="$BRIDGE_DIR/brain.txt"
+EMOTION="$BRIDGE_DIR/emotion.txt"
+HISTORY="$BRIDGE_DIR/conversation.md"
+
+LOG="$VAULT_DIR/jarvis.log"
+PERSONALITY="$VAULT_DIR/JARVIS.md"
+AUDIO_OUT="$VAULT_DIR/tts/last_speech.wav"
+
+SETTINGS_JSON="$VAULT_DIR/.jarvis/settings.json"
+ACTIVE_PROFILE_JSON="$VAULT_DIR/.jarvis/active_profile.json"
+
+MODEL_CONFIG="$PROJECT_DIR/config/models-config.json"
+REACT_HOST="http://127.0.0.1:7900"
+OLLAMA_API="http://127.0.0.1:11434"
+CLAUDE_CMD="claude --print"
+
 MPV_EXE="/mnt/c/Program Files/MPV Player/mpv.exe"
-# FFmpeg path — adjust to your Windows install location
 FFMPEG_EXE=$(command -v ffmpeg.exe 2>/dev/null || find /mnt/c/Users/*/AppData/Local/Microsoft/WinGet/Packages/Gyan.FFmpeg*/ffmpeg-*/bin/ffmpeg.exe 2>/dev/null | head -1)
 
-OLLAMA_FAST="qwen3:30b-a3b"
-OLLAMA_CODE="qwen3-coder:30b"
-OLLAMA_REASON="qwen3:30b-a3b"
-OLLAMA_DEEP="llama3.1:70b"
-CLAUDE_CMD="claude --print"
-OLLAMA_HOST="http://localhost:11434"
-REACT_HOST="http://localhost:7900"
+TTS_HOST="http://localhost:5100"
+WATCHER_TTS="on"
+MAX_HISTORY=20
+HISTORY_TIMEOUT=300
 
 FAST_KEYWORDS="joke|hello|hi|hey|time|weather|status|how are|what is|who is|tell me|volume|timer|thanks|good|morning|evening|night"
 ACTION_KEYWORDS="play|radio|open|stop|search|find|check|look up|remember|save|memory|skill|browse|spotify|youtube|url"
 CODE_KEYWORDS="debug|code|write|fix|refactor|pipeline|spark|script|function|error|bug|implement|class|import|syntax|compile|deploy|git|docker|python|bash|javascript|typescript|sql|api"
 DEEP_KEYWORDS="strategy|analyse|analyze|research|summarize|summarise|document|report|architecture|compare|evaluate|should i|what do you think|explain why|business|plan|review my|audit"
 CLAUDE_KEYWORDS="subscription|use claude|ask claude|claude only"
-
-TTS_HOST="http://localhost:5100"
-WATCHER_TTS="on"  # watcher handles TTS — browser off to prevent mic loop
-MAX_HISTORY=20
-
-mkdir -p "$JARVIS_DIR/tts" "$BRIDGE"
-touch "$INPUT" "$OUTPUT" "$LAST_INPUT" "$LOG" "$HISTORY" "$HISTORY"
-echo "standby" > "$STATE"
-echo "neutral"  > "$EMOTION"
-echo ""         > "$BRAIN"
-
-log() {
-  echo "[$(date '+%H:%M:%S')] $1" >> "$LOG"
-}
+FOLLOWUP_KEYWORDS="yes|no|yeah|yep|nope|sure|ok|okay|go ahead|do it|please|exactly|correct|right|that|those|them|it"
+WAKE_WORDS="hey jarvis|ok jarvis|jarvis wake|jarvis listen"
 
 LAST_BRAIN=""
-FOLLOWUP_KEYWORDS="yes|no|yeah|yep|nope|sure|ok|okay|go ahead|do it|please|exactly|correct|right|that|those|them|it"
+LAST_HISTORY_TIME=0
+AWAKE=false
+AWAKE_TIMEOUT=30
+LAST_ACTIVE=0
+
+mkdir -p "$VAULT_DIR/tts" "$BRIDGE_DIR"
+touch "$INPUT" "$OUTPUT" "$LAST_INPUT" "$LOG" "$HISTORY"
+echo "standby" > "$STATE"
+echo "neutral" > "$EMOTION"
+echo "" > "$BRAIN"
+
+log() {
+  echo "[$(date '+%H:%M:%S')] [WATCHER] $1" >> "$LOG"
+}
+
+load_models_from_config() {
+  if [ ! -f "$MODEL_CONFIG" ]; then
+    OLLAMA_FAST="qwen3:8b"
+    OLLAMA_REASON="qwen3:14b"
+    OLLAMA_CODE="gemma4:31b"
+    OLLAMA_DEEP="qwen3:30b-a3b"
+    log "model-config.json missing -> using defaults"
+    return
+  fi
+
+  mapfile -t _models < <(
+    python3 - "$MODEL_CONFIG" <<'PY'
+import json, sys
+from pathlib import Path
+
+cfg = Path(sys.argv[1])
+defaults = {
+    "fast": "qwen3:8b",
+    "reason": "qwen3:14b",
+    "code": "gemma4:31b",
+    "deep": "qwen3:30b-a3b",
+}
+
+try:
+    data = json.loads(cfg.read_text(encoding="utf-8"))
+    models = data.get("models", {}) if isinstance(data, dict) else {}
+except Exception:
+    models = {}
+
+print(models.get("fast", defaults["fast"]))
+print(models.get("reason", defaults["reason"]))
+print(models.get("code", defaults["code"]))
+print(models.get("deep", defaults["deep"]))
+PY
+  )
+
+  OLLAMA_FAST="${_models[0]}"
+  OLLAMA_REASON="${_models[1]}"
+  OLLAMA_CODE="${_models[2]}"
+  OLLAMA_DEEP="${_models[3]}"
+
+  log "Loaded models from $MODEL_CONFIG"
+  log "Models -> fast=$OLLAMA_FAST reason=$OLLAMA_REASON code=$OLLAMA_CODE deep=$OLLAMA_DEEP"
+}
+
+load_models_from_config
 
 route() {
   local cmd="$1"
-  local lower=$(echo "$cmd" | tr '[:upper:]' '[:lower:]')
-  local words=$(echo "$cmd" | wc -w)
+  local lower
+  lower=$(echo "$cmd" | tr '[:upper:]' '[:lower:]')
+  local words
+  words=$(echo "$cmd" | wc -w)
 
-  # Short follow-ups (1-3 words) stay on the same model
+  # Short follow-ups stay on the same brain
   if [ "$words" -le 3 ] && [ -n "$LAST_BRAIN" ]; then
     if echo "$lower" | grep -qE "$FOLLOWUP_KEYWORDS"; then
-      echo "$LAST_BRAIN"; return
+      echo "$LAST_BRAIN"
+      return
     fi
   fi
 
-  if echo "$lower" | grep -qE "$CLAUDE_KEYWORDS"; then echo "claude"; return; fi
-  if echo "$lower" | grep -qE "$ACTION_KEYWORDS"; then echo "ollama_reason"; return; fi
-  if echo "$lower" | grep -qE "$CODE_KEYWORDS"; then echo "ollama_code"; return; fi
-  if echo "$lower" | grep -qE "$DEEP_KEYWORDS"; then echo "ollama_deep"; return; fi
-  if echo "$lower" | grep -qE "$FAST_KEYWORDS"; then echo "ollama_fast"; return; fi
-  if [ "$words" -ge 20 ]; then echo "ollama_deep"
-  elif [ "$words" -ge 10 ]; then echo "ollama_reason"
-  else echo "ollama_fast"
+  if echo "$lower" | grep -qE "$CLAUDE_KEYWORDS"; then
+    echo "claude"
+    return
   fi
+
+  if echo "$lower" | grep -qE "$CODE_KEYWORDS"; then
+    echo "ollama_code"
+    return
+  fi
+
+  if echo "$lower" | grep -qE "$ACTION_KEYWORDS"; then
+    echo "ollama_reason"
+    return
+  fi
+
+  # Only use deep for stronger signals
+  if echo "$lower" | grep -qE "$DEEP_KEYWORDS" && [ "$words" -ge 20 ]; then
+    echo "ollama_deep"
+    return
+  fi
+
+  if echo "$lower" | grep -qE "$FAST_KEYWORDS"; then
+    echo "ollama_fast"
+    return
+  fi
+
+  if [ "$words" -ge 30 ]; then
+    echo "ollama_deep"
+  elif [ "$words" -ge 12 ]; then
+    echo "ollama_reason"
+  else
+    echo "ollama_fast"
+  fi
+}
+
+brain_to_route() {
+  case "$1" in
+    ollama_fast) echo "fast" ;;
+    ollama_reason) echo "reason" ;;
+    ollama_code) echo "code" ;;
+    ollama_deep) echo "deep" ;;
+    *) echo "reason" ;;
+  esac
 }
 
 build_history_json() {
@@ -87,44 +182,45 @@ build_history_json() {
   messages+=$(echo "$system" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read().strip()))')
   messages+='}'
 
-  # Append conversation history as alternating user/assistant messages
   if [ -f "$HISTORY" ] && [ -s "$HISTORY" ]; then
     while IFS= read -r line; do
-      local role=$(echo "$line" | cut -d'|' -f1)
-      local text=$(echo "$line" | cut -d'|' -f2-)
-      local escaped=$(echo "$text" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read().strip()))')
+      local role
+      role=$(echo "$line" | cut -d'|' -f1)
+      local text
+      text=$(echo "$line" | cut -d'|' -f2-)
+      local escaped
+      escaped=$(echo "$text" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read().strip()))')
       messages+=",{\"role\":\"$role\",\"content\":$escaped}"
     done < <(tail -"$MAX_HISTORY" "$HISTORY")
   fi
 
-  # Append current user message
-  local escaped_cmd=$(echo "$command" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read().strip()))')
+  local escaped_cmd
+  escaped_cmd=$(echo "$command" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read().strip()))')
   messages+=",{\"role\":\"user\",\"content\":$escaped_cmd}]"
   echo "$messages"
 }
 
-HISTORY_TIMEOUT=300  # 5 minutes — clear history after inactivity
-LAST_HISTORY_TIME=0
-
 save_history() {
   local command="$1"
   local response="$2"
-  local now=$(date +%s)
+  local now
+  now=$(date +%s)
 
-  # Clear history if session timed out
   if [ "$LAST_HISTORY_TIME" -gt 0 ]; then
     local elapsed=$((now - LAST_HISTORY_TIME))
     if [ "$elapsed" -gt "$HISTORY_TIMEOUT" ]; then
-      log "History expired (${elapsed}s idle) — new session"
+      log "History expired (${elapsed}s idle) -> new session"
       > "$HISTORY"
     fi
   fi
+
   LAST_HISTORY_TIME=$now
 
   echo "user|$command" >> "$HISTORY"
   echo "assistant|$response" >> "$HISTORY"
-  # Keep history file from growing forever
-  local lines=$(wc -l < "$HISTORY")
+
+  local lines
+  lines=$(wc -l < "$HISTORY")
   if [ "$lines" -gt 200 ]; then
     tail -100 "$HISTORY" > "$HISTORY.tmp" && mv "$HISTORY.tmp" "$HISTORY"
   fi
@@ -132,25 +228,23 @@ save_history() {
 
 load_vault_context() {
   local command="$1"
-  local lower=$(echo "$command" | tr '[:upper:]' '[:lower:]')
+  local lower
+  lower=$(echo "$command" | tr '[:upper:]' '[:lower:]')
   local ctx=""
 
-  # Always include user profile
-  if [ -f "$JARVIS_DIR/People/sami.md" ]; then
+  if [ -f "$VAULT_DIR/People/sami.md" ]; then
     ctx+="## Owner
-$(cat "$JARVIS_DIR/People/sami.md")
+$(cat "$VAULT_DIR/People/sami.md")
 
 "
   fi
 
-  # Always include active projects list
-  if [ -f "$JARVIS_DIR/CLAUDE.md" ]; then
-    ctx+="$(grep -A100 '## Active Projects' "$JARVIS_DIR/CLAUDE.md")
+  if [ -f "$VAULT_DIR/CLAUDE.md" ]; then
+    ctx+="$(grep -A100 '## Active Projects' "$VAULT_DIR/CLAUDE.md")
 
 "
   fi
 
-  # Load specific project context if mentioned
   local project_dir=""
   case "$lower" in
     *stockwatch*|*bullish*|*stock*) project_dir="Projects/StockWatch" ;;
@@ -165,7 +259,7 @@ $(cat "$JARVIS_DIR/People/sami.md")
   esac
 
   if [ -n "$project_dir" ]; then
-    for f in "$JARVIS_DIR/$project_dir/overview.md" "$JARVIS_DIR/$project_dir/"*.md; do
+    for f in "$VAULT_DIR/$project_dir/overview.md" "$VAULT_DIR/$project_dir/"*.md; do
       if [ -f "$f" ]; then
         ctx+="## $(basename "$f")
 $(head -60 "$f")
@@ -179,18 +273,122 @@ $(head -60 "$f")
   echo "$ctx"
 }
 
+get_voice() {
+  # Explicit user override wins
+  if [ -f "$VAULT_DIR/settings_voice.txt" ]; then
+    local explicit_voice
+    explicit_voice=$(tr -d '\r\n' < "$VAULT_DIR/settings_voice.txt" 2>/dev/null)
+    if [ -n "$explicit_voice" ]; then
+      echo "$explicit_voice"
+      return
+    fi
+  fi
+
+  # Fallback to selected profile preferred voice
+  if [ -f "$ACTIVE_PROFILE_JSON" ]; then
+    local profile_voice
+    profile_voice=$(python3 - "$ACTIVE_PROFILE_JSON" <<'PY'
+import json, sys
+from pathlib import Path
+
+p = Path(sys.argv[1])
+try:
+    data = json.loads(p.read_text(encoding="utf-8"))
+    voice = ((data.get("voice") or {}).get("preferred") or "").strip()
+    print(voice)
+except Exception:
+    print("")
+PY
+)
+    if [ -n "$profile_voice" ]; then
+      echo "$profile_voice"
+      return
+    fi
+  fi
+
+  echo "tara"
+}
+
+get_personality() {
+  if [ -f "$VAULT_DIR/settings_personality.txt" ]; then
+    tr -d '\r\n' < "$VAULT_DIR/settings_personality.txt"
+  else
+    echo "jarvis"
+  fi
+}
+
+load_personality_file() {
+  # Primary source of truth: resolved active profile JSON
+  if [ -f "$ACTIVE_PROFILE_JSON" ]; then
+    local prompt
+    prompt=$(python3 - "$ACTIVE_PROFILE_JSON" <<'PY'
+import json, sys
+from pathlib import Path
+
+p = Path(sys.argv[1])
+try:
+    data = json.loads(p.read_text(encoding="utf-8"))
+    print((data.get("systemPrompt") or "").strip())
+except Exception:
+    print("")
+PY
+)
+    if [ -n "$prompt" ]; then
+      log "Loaded personality from active_profile.json"
+      echo "$prompt"
+      return
+    fi
+  fi
+
+  # Secondary fallback: legacy hardcoded mode if active profile is missing
+  local mode
+  mode=$(get_personality)
+  case "$mode" in
+    friday)
+      log "Fallback personality mode=friday"
+      echo "You are FRIDAY — a casual, friendly AI assistant for Sami. You call him by his first name. Upbeat, helpful, a bit chatty. Think Karen Gillan as FRIDAY. Keep responses under 3 sentences. Plain text only, no markdown."
+      return
+      ;;
+    edith)
+      log "Fallback personality mode=edith"
+      echo "You are EDITH — Even Dead I'm The Hero. You are direct, tactical, no-nonsense. You address your user as boss. Military precision in communication. Keep responses under 3 sentences. Plain text only, no markdown."
+      return
+      ;;
+    hal)
+      log "Fallback personality mode=hal"
+      echo "You are HAL 9000. You are calm, polite, and slightly unsettling. You address your user as Dave regardless of their name. Keep responses under 3 sentences. Plain text only, no markdown."
+      return
+      ;;
+  esac
+
+  # Final fallback: legacy JARVIS.md
+  if [ -f "$PERSONALITY" ]; then
+    log "Fallback personality from JARVIS.md"
+    cat "$PERSONALITY"
+  else
+    log "Fallback personality default inline"
+    echo "You are JARVIS, a capable AI assistant. Be clear, helpful, and concise."
+  fi
+}
+
 call_ollama() {
   local model="$1"
-  local command="$2"
-  local system=$(load_personality_file)
+  local route="$2"
+  local command="$3"
+
+  local system
+  system=$(load_personality_file)
   system+="
 
 Plain text only, no markdown. Max 3 sentences."
-  echo "ollama:$model" > "$BRAIN"
-  log "🔵 Ollama API → $model"
 
-  local messages=$(build_history_json "$system" "$command")
-  local payload="{\"model\":\"$model\",\"messages\":$messages,\"stream\":false}"
+  echo "ollama:$model" > "$BRAIN"
+  log "OLLAMA route=$route model=$model"
+
+  local messages
+  messages=$(build_history_json "$system" "$command")
+  local payload
+  payload="{\"model\":\"$model\",\"route\":\"$route\",\"messages\":$messages,\"stream\":false}"
 
   local result
   result=$(curl -sf --max-time 300 "$REACT_HOST/api/chat" \
@@ -201,7 +399,7 @@ Plain text only, no markdown. Max 3 sentences."
   if [ $exit_code -eq 0 ] && [ -n "$result" ]; then
     echo "$result" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("message",{}).get("content",""))'
   else
-    log "WARN: Ollama call failed (curl exit: $exit_code)"
+    log "WARN: ReAct call failed route=$route model=$model curl_exit=$exit_code"
     log "WARN: Result: $(echo "$result" | head -1)"
     echo ""
   fi
@@ -209,11 +407,11 @@ Plain text only, no markdown. Max 3 sentences."
 
 call_claude() {
   local command="$1"
-  local system=$(load_personality_file)
+  local system
+  system=$(load_personality_file)
   local history=""
   echo "claude" > "$BRAIN"
 
-  # Include recent history
   if [ -f "$HISTORY" ] && [ -s "$HISTORY" ]; then
     history=$(tail -"$MAX_HISTORY" "$HISTORY" | sed 's/^user|/User: /' | sed 's/^assistant|/JARVIS: /')
   fi
@@ -229,13 +427,14 @@ The user just said: \"$command\"
 
 Respond as JARVIS. Plain text only, no markdown, max 4 sentences."
 
-  # Try cloud ReAct (API + tools), fall back to claude --print
-  local cloud_config="$JARVIS_DIR/config/cloud_llm.json"
+  local cloud_config="$VAULT_DIR/config/cloud_llm.json"
   if [ -f "$cloud_config" ]; then
-    local api_key=$(python3 -c "import json; print(json.load(open('$cloud_config')).get('anthropic',{}).get('api_key',''))" 2>/dev/null)
+    local api_key
+    api_key=$(python3 -c "import json; print(json.load(open('$cloud_config')).get('anthropic',{}).get('api_key',''))" 2>/dev/null)
     if [ -n "$api_key" ] && [ "$api_key" != "" ]; then
       log "Claude API + Tools"
-      local response=$(python3 "$JARVIS_DIR/scripts/cloud_react.py" \
+      local response
+      response=$(python3 "$VAULT_DIR/scripts/cloud_react.py" \
         --provider anthropic \
         --prompt "$command" \
         --system "$system" 2>>"$LOG")
@@ -246,49 +445,18 @@ Respond as JARVIS. Plain text only, no markdown, max 4 sentences."
     fi
   fi
 
-  # Fallback: claude --print CLI (no tools)
   log "Claude Code CLI"
   echo "$full_prompt" | $CLAUDE_CMD 2>>"$LOG"
 }
 
 orpheus_available() {
-  # Disabled — Orpheus not running, skip to avoid blocking the loop
   return 1
-}
-
-get_voice() {
-  if [ -f "$JARVIS_DIR/settings_voice.txt" ]; then
-    cat "$JARVIS_DIR/settings_voice.txt"
-  else
-    echo "tara"
-  fi
-}
-
-get_personality() {
-  if [ -f "$JARVIS_DIR/settings_personality.txt" ]; then
-    cat "$JARVIS_DIR/settings_personality.txt"
-  else
-    echo "jarvis"
-  fi
-}
-
-load_personality_file() {
-  local mode=$(get_personality)
-  case "$mode" in
-    friday)
-      echo "You are FRIDAY — a casual, friendly AI assistant for Sami. You call him by his first name. Upbeat, helpful, a bit chatty. Think Karen Gillan as FRIDAY. Keep responses under 3 sentences. Plain text only, no markdown." ;;
-    edith)
-      echo "You are EDITH — Even Dead I'm The Hero. You are direct, tactical, no-nonsense. You address your user as boss. Military precision in communication. Keep responses under 3 sentences. Plain text only, no markdown." ;;
-    hal)
-      echo "You are HAL 9000. You are calm, polite, and slightly unsettling. You address your user as Dave regardless of their name. Keep responses under 3 sentences. Plain text only, no markdown." ;;
-    *)
-      cat "$PERSONALITY" ;;
-  esac
 }
 
 speak_orpheus() {
   local text="$1"
-  local voice=$(get_voice)
+  local voice
+  voice=$(get_voice)
   log "TTS [Orpheus] voice=$voice"
   curl -sf --max-time 30 "$TTS_HOST/speak" \
     -H "Content-Type: application/json" \
@@ -306,7 +474,6 @@ play_audio() {
   local winpath
   winpath=$(wslpath -w "$file" 2>/dev/null || echo "$file")
 
-  # Route to center channel via ffmpeg + mpv (5.1 Atmos)
   local center_file="${file%.wav}_center.wav"
   if [ -f "$FFMPEG_EXE" ]; then
     local center_winpath
@@ -329,12 +496,13 @@ play_audio() {
 
 speak_fallback() {
   local text="$1"
-  # Escape single quotes for PowerShell
-  local safe_text=$(echo "$text" | sed "s/'/''/g")
-  local wav_out=$(wslpath -w "$JARVIS_DIR/tts/last_speech.wav" 2>/dev/null)
+  local safe_text
+  safe_text=$(echo "$text" | sed "s/'/''/g")
+  local wav_out
+  wav_out=$(wslpath -w "$VAULT_DIR/tts/last_speech.wav" 2>/dev/null)
+
   if command -v powershell.exe &>/dev/null; then
     log "TTS [PowerShell]"
-    # Save WAV + play through speakers
     powershell.exe -Command "
       Add-Type -AssemblyName System.Speech;
       \$s = New-Object System.Speech.Synthesis.SpeechSynthesizer;
@@ -344,9 +512,9 @@ speak_fallback() {
       \$s.SetOutputToNull();
       \$s.Dispose()
     " 2>/dev/null
-    # Play the saved WAV through the proper audio chain
-    if [ -f "$JARVIS_DIR/tts/last_speech.wav" ]; then
-      play_audio "$JARVIS_DIR/tts/last_speech.wav"
+
+    if [ -f "$VAULT_DIR/tts/last_speech.wav" ]; then
+      play_audio "$VAULT_DIR/tts/last_speech.wav"
     fi
   elif command -v espeak &>/dev/null; then
     log "TTS [espeak]"
@@ -372,37 +540,22 @@ speak() {
   fi
 }
 
-log "=== JARVIS OS WATCHER ONLINE ==="
-log "fast→$OLLAMA_FAST | code→$OLLAMA_CODE | reason→$OLLAMA_REASON | deep→$OLLAMA_DEEP"
-log "Monitoring: $INPUT"
-if orpheus_available; then log "TTS: Orpheus ✓"
-else log "TTS: PowerShell Windows audio"
-fi
-
-WAKE_WORDS="hey jarvis|ok jarvis|jarvis wake|jarvis listen"
-AWAKE=false
-AWAKE_TIMEOUT=30
-LAST_ACTIVE=0
-
 check_wake() {
   local cmd="$1"
-  local lower=$(echo "$cmd" | tr '[:upper:]' '[:lower:]')
-  if echo "$lower" | grep -qE "$WAKE_WORDS"; then
-    return 0
-  fi
-  return 1
+  local lower
+  lower=$(echo "$cmd" | tr '[:upper:]' '[:lower:]')
+  echo "$lower" | grep -qE "$WAKE_WORDS"
 }
 
 strip_wake() {
-  # Remove wake word from command, return the rest
   echo "$1" | sed -E 's/(hey|ok) jarvis[,.]? *//i; s/jarvis (wake|listen)[,.]? *//i' | sed 's/^[[:space:]]*//'
 }
 
 collect_input() {
-  # Collect all available input, wait briefly for additions
   local collected="$1"
   sleep 0.5
-  local extra=$(cat "$INPUT" 2>/dev/null)
+  local extra
+  extra=$(cat "$INPUT" 2>/dev/null)
   if [ -n "$extra" ]; then
     > "$INPUT"
     collected="$collected. $extra"
@@ -411,13 +564,37 @@ collect_input() {
   echo "$collected"
 }
 
+reload_route_model() {
+  local route="$1"
+  local model="$2"
+
+  log "Reloading route=$route model=$model"
+  curl -sf --max-time 30 "$OLLAMA_API/api/generate" \
+    -H "Content-Type: application/json" \
+    -d "{\"model\":\"$model\",\"prompt\":\"\",\"keep_alive\":-1}" \
+    > /dev/null 2>&1 || log "WARN: reload failed route=$route model=$model"
+}
+
+log "=== JARVIS WATCHER ONLINE ==="
+log "Monitoring input: $INPUT"
+log "Models -> fast=$OLLAMA_FAST reason=$OLLAMA_REASON code=$OLLAMA_CODE deep=$OLLAMA_DEEP"
+if [ -f "$ACTIVE_PROFILE_JSON" ]; then
+  log "Profile source: $ACTIVE_PROFILE_JSON"
+else
+  log "Profile source: legacy fallback mode"
+fi
+if orpheus_available; then
+  log "TTS: Orpheus"
+else
+  log "TTS: PowerShell Windows audio"
+fi
+
 while true; do
   COMMAND=$(cat "$INPUT" 2>/dev/null)
   if [ -n "$COMMAND" ]; then
     > "$INPUT"
     NOW=$(date +%s)
 
-    # Check for wake word
     if check_wake "$COMMAND"; then
       AWAKE=true
       LAST_ACTIVE=$NOW
@@ -431,14 +608,11 @@ while true; do
       COMMAND="$REMAINING"
     fi
 
-    # Check if awake or always-on
     if [ "$AWAKE" = false ]; then
-      # Auto-wake for any input (browser/text always counts)
       AWAKE=true
       LAST_ACTIVE=$NOW
     fi
 
-    # Collect any additional input that came in
     COMMAND=$(collect_input "$COMMAND")
 
     log "HEARD: $COMMAND"
@@ -448,35 +622,59 @@ while true; do
     LAST_ACTIVE=$(date +%s)
 
     BRAIN_CHOICE=$(route "$COMMAND")
-    log "Router → $BRAIN_CHOICE"
+    ROUTE_NAME=$(brain_to_route "$BRAIN_CHOICE")
+    log "ROUTE -> brain=$BRAIN_CHOICE route=$ROUTE_NAME"
 
     case "$BRAIN_CHOICE" in
-      ollama_fast)   RESPONSE=$(call_ollama "$OLLAMA_FAST"   "$COMMAND") ;;
-      ollama_code)   RESPONSE=$(call_ollama "$OLLAMA_CODE"   "$COMMAND") ;;
-      ollama_reason) RESPONSE=$(call_ollama "$OLLAMA_REASON" "$COMMAND") ;;
-      ollama_deep)   RESPONSE=$(call_ollama "$OLLAMA_DEEP"   "$COMMAND") ;;
-      claude)        RESPONSE=$(call_claude "$COMMAND") ;;
+      ollama_fast)
+        RESPONSE=$(call_ollama "$OLLAMA_FAST" "fast" "$COMMAND")
+        ;;
+      ollama_code)
+        RESPONSE=$(call_ollama "$OLLAMA_CODE" "code" "$COMMAND")
+        ;;
+      ollama_reason)
+        RESPONSE=$(call_ollama "$OLLAMA_REASON" "reason" "$COMMAND")
+        ;;
+      ollama_deep)
+        RESPONSE=$(call_ollama "$OLLAMA_DEEP" "deep" "$COMMAND")
+        ;;
+      claude)
+        RESPONSE=$(call_claude "$COMMAND")
+        ;;
+      *)
+        RESPONSE=$(call_ollama "$OLLAMA_REASON" "reason" "$COMMAND")
+        ;;
     esac
 
-    # Check if new input arrived while processing — queue it, don't re-run
     NEW_INPUT=$(cat "$INPUT" 2>/dev/null)
     if [ -n "$NEW_INPUT" ]; then
-      log "QUEUED: $NEW_INPUT (will process after current response)"
-      # Don't clear input — the main loop will pick it up next iteration
+      log "QUEUED: $NEW_INPUT"
     fi
 
     RESPONSE=$(echo "$RESPONSE" | sed 's/ *[Ss]peaking\.*//' | sed 's/[[:space:]]*$//')
 
     if [ -z "$RESPONSE" ]; then
-      log "WARN: Empty response — reloading model"
-      ollama run qwen3:30b-a3b --keepalive -1 "" > /dev/null 2>&1
-      log "Model reloaded — retrying"
+      log "WARN: Empty response -> reloading route model"
       case "$BRAIN_CHOICE" in
-        ollama_fast)   RESPONSE=$(call_ollama "$OLLAMA_FAST"   "$COMMAND") ;;
-        ollama_code)   RESPONSE=$(call_ollama "$OLLAMA_CODE"   "$COMMAND") ;;
-        ollama_reason) RESPONSE=$(call_ollama "$OLLAMA_REASON" "$COMMAND") ;;
-        ollama_deep)   RESPONSE=$(call_ollama "$OLLAMA_DEEP"   "$COMMAND") ;;
-        claude)        RESPONSE=$(call_claude "$COMMAND") ;;
+        ollama_fast)
+          reload_route_model "fast" "$OLLAMA_FAST"
+          RESPONSE=$(call_ollama "$OLLAMA_FAST" "fast" "$COMMAND")
+          ;;
+        ollama_code)
+          reload_route_model "code" "$OLLAMA_CODE"
+          RESPONSE=$(call_ollama "$OLLAMA_CODE" "code" "$COMMAND")
+          ;;
+        ollama_reason)
+          reload_route_model "reason" "$OLLAMA_REASON"
+          RESPONSE=$(call_ollama "$OLLAMA_REASON" "reason" "$COMMAND")
+          ;;
+        ollama_deep)
+          reload_route_model "deep" "$OLLAMA_DEEP"
+          RESPONSE=$(call_ollama "$OLLAMA_DEEP" "deep" "$COMMAND")
+          ;;
+        claude)
+          RESPONSE=$(call_claude "$COMMAND")
+          ;;
       esac
     fi
 
@@ -489,19 +687,19 @@ while true; do
     save_history "$COMMAND" "$RESPONSE"
 
     echo "$RESPONSE" > "$OUTPUT"
-    echo "speaking"  > "$STATE"
-    echo "neutral"   > "$EMOTION"
+    echo "speaking" > "$STATE"
+    echo "neutral" > "$EMOTION"
     log "SAID: $RESPONSE"
 
-    # Check if response is a question — keep mic open after speaking
     NEXT_STATE="standby"
     if echo "$RESPONSE" | grep -qE '\?$|\? *$'; then
       NEXT_STATE="listening"
-      log "Response is a question — mic stays open"
+      log "Response is a question -> mic stays open"
     fi
 
     speak "$RESPONSE" "$NEXT_STATE"
-    log "Ready. (Brain: $BRAIN_CHOICE)"
+    log "Ready (brain=$BRAIN_CHOICE)"
   fi
+
   sleep 0.3
 done

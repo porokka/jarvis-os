@@ -41,14 +41,21 @@ def read_file(filepath: str) -> str:
     except Exception as e:
         return f"Error reading file: {e}"
 
-def write_file(filepath: str, content: str) -> str:
-    """Write content to a file."""
+def edit_file(filepath: str, old_content: str, new_content: str) -> str:
+    """Edit a file by replacing old content with new content."""
     try:
-        with open(filepath, 'w', encoding='utf-8') as f:
-            f.write(content)
-        return f"Successfully wrote to {filepath}"
+        with open(filepath, 'r', encoding='utf-8') as f:
+            current_content = f.read()
+
+        if old_content not in current_content:
+            return f"Error: Could not find the specified content in {filepath}"
+
+        new_full_content = current_content.replace(old_content, new_content)
+        with open(filepath, 'w', encoding=' 'utf-8') as f:
+            f.write(new_full_content)
+        return f"Successfully edited {filepath}"
     except Exception as e:
-        return f"Error writing file: {e}"
+        return f"Error editing file: {e}"
 
 def list_files(directory: str = ".") -> str:
     """List files in a directory."""
@@ -226,26 +233,30 @@ TOOLS = [
         }
     },
     {
-        "type": "function",
-        "function": {
-            "name": "write_file",
-            "description": "Write content to a file",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "filepath": {
-                        "type": "string",
-                        "description": "Path to the file to write"
-                    },
-                    "content": {
-                        "type": "string",
-                        "description": "Content to write to the file"
+                "type": "function",
+                "function": {
+                    "name": "edit_file",
+                    "description": "Edit a file by replacing old content with new content",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "filepath": {
+                                "type": "string",
+                                "description": "Path to the file to edit"
+                            },
+                            "old_content": {
+                                "type": "string",
+                                "description": "The content to be replaced"
+                            },
+                            "new_content": {
+                                "type": "string",
+                                "description": "The new content to insert"
+                            }
+                        },
+                        "required": ["filepath", "old_content", "new_content"]
                     }
-                },
-                "required": ["filepath", "content"]
-            }
-        }
-    },
+                }
+            },
     {
         "type": "function",
         "function": {
@@ -385,7 +396,9 @@ TOOLS = [
 TOOL_MAP = {
     "read_file": read_file,
     "write_file": write_file,
+    "edit_file": edit_file,
     "list_files": list_files,
+    "create_directory": create_directory,
     "create_directory": create_directory,
     "git_status": git_status,
     "git_commit": git_commit,

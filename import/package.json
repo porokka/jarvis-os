@@ -1,0 +1,38 @@
+{
+  "name": "jarvis-coding-interface",
+  "version": "1.0.0",
+  "description": "Coding interface for Jarvis OS similar to Claude Code",
+  "main": "index.js",
+  "scripts": {
+    "build": "echo 'Building...'",
+    "test": "echo 'Testing...'",
+    "start": "echo 'Starting...'"
+  },
+  "keywords": [
+    "jarvis",
+    "coding-interface",
+    "claude-code",
+    "mcp",
+    "react"
+  ],
+  "author": "Jarvis OS Team",
+  "license": "MIT",
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "typescript": "^5.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.0.0",
+    "@types/react-dom": "^18.0.0",
+    "@types/node": "^18.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jarvis-os/coding-interface.git"
+  },
+  "bugs": {
+    "url": "https://github.com/jarvis-os/coding-interface/issues"
+  },
+  "homepage": "https://github.com/jarvis-os/coding-interface#readme"
+}

@@ -1,17 +1,27 @@
 {
   "enabled": {
-    "denon": true,
-    "shield": true,
-    "radio": true,
-    "volume": true,
-    "timer": true,
-    "memory": true,
-    "vault": true,
-    "web": true,
-    "shell": true,
     "claude_skills": true,
+    "cloud_llm": true,
+    "coding-skill": true,
+    "denon": true,
+    "email": true,
+    "flux": true,
+    "git": true,
+    "hue": true,
     "lg_tv": true,
+    "memory": true,
     "network": true,
-    "panasonic_bd": true
+    "notes": true,
+    "panasonic_bd": true,
+    "phone": true,
+    "plex": true,
+    "radio": true,
+    "shell": true,
+    "shield": true,
+    "sms": true,
+    "timer": true,
+    "vault": true,
+    "volume": true,
+    "web": true
   }
 }

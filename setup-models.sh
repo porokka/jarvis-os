@@ -87,7 +87,7 @@ elif [ "$TOTAL_VRAM" -ge 24000 ]; then
   # Single 3090 or 4090
   AUTO_FAST="qwen3:8b"
   AUTO_REASON="qwen3:30b-a3b"
-  AUTO_CODE="qwen3-coder:30b"
+  AUTO_CODE="gemma4:31b" 
   AUTO_DEEP="qwen3:30b-a3b"
   TIER="HIGH (24GB)"
 elif [ "$TOTAL_VRAM" -ge 16000 ]; then
