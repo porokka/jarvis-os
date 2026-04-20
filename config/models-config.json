@@ -3,7 +3,8 @@
   "total_vram_mb": 24576,
   "gpu_count": 1,
   "models": {
-    "fast": "qwen3:14b",
+    "fast": "qwen3:8b",
+    "tools":"qwen3:14b",
     "reason": "gemma4:26b",
     "code": "gemma4:26b",
     "deep": "gemma4:26b"

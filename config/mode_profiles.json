@@ -1,0 +1,38 @@
+{
+  "defaults": {
+    "fast": {
+      "mode": "conversation",
+      "persona": "jarvis",
+      "tts_engine": "orpheus",
+      "tts_enabled": true
+    },
+    "tools": {
+      "mode": "tools",
+      "persona": "jarvis",
+      "tts_engine": "orpheus",
+      "tts_enabled": true
+    },
+    "code": {
+      "mode": "deep_engineer",
+      "persona": "the_one",
+      "tts_engine": "fallback",
+      "tts_enabled": false
+    },
+    "deep": {
+      "mode": "deep_reasoning",
+      "persona": "architect",
+      "tts_engine": "fallback",
+      "tts_enabled": false
+    }
+  },
+  "tool_overrides": [
+    {
+      "route": "tools",
+      "tools_any": ["room_command", "radio", "plex", "volume"],
+      "mode": "shield",
+      "persona": "shield_hill",
+      "tts_engine": "orpheus",
+      "tts_enabled": true
+    }
+  ]
+}

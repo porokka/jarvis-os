@@ -27,13 +27,15 @@ def init():
     try:
         CONFIG = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
         IP = CONFIG["ip"]
-        # Build input alias map
+
+        INPUTS = {}
         for name, cfg in CONFIG.get("inputs", {}).items():
             cmd = cfg["command"]
             INPUTS[name.lower()] = cmd
             for alias in cfg.get("aliases", []):
                 INPUTS[alias.lower()] = cmd
-        print(f"[DENON] Loaded: {CONFIG['name']} at {IP} ({len(INPUTS)} input aliases)")
+
+        print(f"[DENON] Loaded: {CONFIG.get('name', 'Denon')} at {IP} ({len(INPUTS)} input aliases)")
     except Exception as e:
         print(f"[DENON] Config error: {e}")
 
@@ -112,7 +114,7 @@ def exec_denon_power(action: str) -> str:
     power = CONFIG.get("power", {})
     cmd = power.get(action.lower())
     if not cmd:
-        return f"Unknown power action. Use: on, off, status"
+        return "Unknown power action. Use: on, off, status"
     result = _send(cmd)
     return f"Denon power: {action}" + (f" ({result})" if action == "status" else "")
 
@@ -130,14 +132,12 @@ def exec_denon_zone(zone: str, action: str) -> str:
     return f"Denon {zone} {action}"
 
 
-# -- Tool definitions (Ollama format) --
-
 TOOLS = [
     {
         "type": "function",
         "function": {
             "name": "denon_input",
-            "description": "Switch Denon AVR input. Inputs: pc/game, shield/mediaplayer, vinyl/phono, tv, bluetooth, network, usb, dvd, bluray, tuner. Also try aliases like 'computer', 'monitor', 'turntable', 'record'.",
+            "description": "Switch Denon AVR input. Inputs: pc/game, shield/mediaplayer, vinyl/phono, tv, bluetooth, network, usb, dvd, bluray, tuner. Also try aliases like computer, monitor, turntable, record.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -154,7 +154,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "denon_volume",
-            "description": "Set Denon receiver volume. Use 'up', 'down', 'mute', 'unmute', or a number 0-98.",
+            "description": "Set Denon receiver volume. Use up, down, mute, unmute, or a number 0-98.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -218,6 +218,27 @@ TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "denon_zone",
+            "description": "Control a Denon zone such as zone1 or zone2. Actions include on, off, volume_up, volume_down, mute_on, mute_off.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "zone": {
+                        "type": "string",
+                        "description": "Zone name, e.g. zone1 or zone2",
+                    },
+                    "action": {
+                        "type": "string",
+                        "description": "Action: on, off, volume_up, volume_down, mute_on, mute_off",
+                    },
+                },
+                "required": ["zone", "action"],
+            },
+        },
+    },
 ]
 
 TOOL_MAP = {
@@ -226,12 +247,221 @@ TOOL_MAP = {
     "denon_preset": exec_denon_preset,
     "denon_surround": exec_denon_surround,
     "denon_power": exec_denon_power,
+    "denon_zone": exec_denon_zone,
 }
 
 KEYWORDS = {
-    "denon_input": ["denon", "receiver", "input", "switch to pc", "switch to shield", "vinyl", "phono", "turntable", "bluetooth", "network"],
-    "denon_volume": ["denon volume", "receiver volume", "turn up denon", "turn down denon"],
-    "denon_preset": ["headphones", "headset", "speakers", "quiet", "night mode", "both speakers"],
-    "denon_surround": ["surround", "stereo", "dolby", "dts", "pure direct", "surround mode"],
-    "denon_power": ["denon power", "receiver on", "receiver off", "turn on denon", "turn off denon"],
+    "denon_input": [
+        "denon",
+        "receiver",
+        "input",
+        "switch to pc",
+        "switch to shield",
+        "vinyl",
+        "phono",
+        "turntable",
+        "bluetooth",
+        "network",
+    ],
+    "denon_volume": [
+        "denon volume",
+        "receiver volume",
+        "turn up denon",
+        "turn down denon",
+        "mute denon",
+        "unmute denon",
+    ],
+    "denon_preset": [
+        "headphones",
+        "headset",
+        "speakers",
+        "quiet",
+        "night mode",
+        "both speakers",
+    ],
+    "denon_surround": [
+        "surround",
+        "stereo",
+        "dolby",
+        "dts",
+        "pure direct",
+        "surround mode",
+    ],
+    "denon_power": [
+        "denon power",
+        "receiver on",
+        "receiver off",
+        "turn on denon",
+        "turn off denon",
+    ],
+    "denon_zone": [
+        "zone2",
+        "zone 2",
+        "zone1",
+        "zone 1",
+        "receiver zone",
+        "second zone",
+    ],
+}
+
+SKILL_META = {
+    "intent_aliases": [
+        "denon",
+        "receiver",
+        "avr",
+        "audio receiver",
+        "home theater receiver",
+    ],
+    "keywords": [
+        "denon",
+        "receiver",
+        "avr",
+        "input",
+        "volume",
+        "surround",
+        "preset",
+        "zone2",
+        "zone 2",
+        "power",
+    ],
+    "route": "reason",
+    "tools": {
+        "denon_input": {
+            "intent_aliases": [
+                "denon input",
+                "receiver input",
+                "switch input",
+            ],
+            "keywords": [
+                "switch to pc",
+                "switch to shield",
+                "vinyl",
+                "phono",
+                "turntable",
+                "bluetooth",
+                "network",
+                "receiver input",
+            ],
+            "direct_match": [
+                "switch input",
+                "denon input",
+                "receiver input",
+            ],
+            "route": "reason",
+        },
+        "denon_volume": {
+            "intent_aliases": [
+                "denon volume",
+                "receiver volume",
+                "turn up denon",
+                "turn down denon",
+            ],
+            "keywords": [
+                "denon volume",
+                "receiver volume",
+                "turn up denon",
+                "turn down denon",
+                "mute denon",
+                "unmute denon",
+            ],
+            "direct_match": [
+                "denon volume",
+                "receiver volume",
+                "turn up denon",
+                "turn down denon",
+                "mute denon",
+                "unmute denon",
+            ],
+            "route": "reason",
+        },
+        "denon_preset": {
+            "intent_aliases": [
+                "denon preset",
+                "audio preset",
+                "receiver preset",
+            ],
+            "keywords": [
+                "headphones",
+                "headset",
+                "speakers",
+                "quiet",
+                "night mode",
+                "both speakers",
+                "audio preset",
+            ],
+            "direct_match": [
+                "denon preset",
+                "audio preset",
+                "receiver preset",
+            ],
+            "route": "reason",
+        },
+        "denon_surround": {
+            "intent_aliases": [
+                "surround mode",
+                "denon surround",
+                "receiver surround",
+            ],
+            "keywords": [
+                "surround",
+                "stereo",
+                "dolby",
+                "dts",
+                "pure direct",
+                "surround mode",
+            ],
+            "direct_match": [
+                "surround mode",
+                "denon surround",
+                "receiver surround",
+            ],
+            "route": "reason",
+        },
+        "denon_power": {
+            "intent_aliases": [
+                "denon power",
+                "receiver power",
+                "turn on denon",
+                "turn off denon",
+            ],
+            "keywords": [
+                "denon power",
+                "receiver on",
+                "receiver off",
+                "turn on denon",
+                "turn off denon",
+            ],
+            "direct_match": [
+                "denon power",
+                "receiver power",
+                "turn on denon",
+                "turn off denon",
+            ],
+            "route": "reason",
+        },
+        "denon_zone": {
+            "intent_aliases": [
+                "denon zone",
+                "receiver zone",
+                "zone2",
+                "zone 2",
+            ],
+            "keywords": [
+                "zone2",
+                "zone 2",
+                "zone1",
+                "zone 1",
+                "receiver zone",
+                "second zone",
+            ],
+            "direct_match": [
+                "zone2",
+                "zone 2",
+                "zone1",
+                "zone 1",
+                "receiver zone",
+            ],
+            "route": "reason",
+        },
+    },
 }

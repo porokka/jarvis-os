@@ -2,7 +2,7 @@
 # ============================================================
 # JARVIS Watcher — The Nervous System
 # Route-aware watcher using shared model-config.json
-# Profile-aware personality loading via active_profile.json
+# Runtime-mode-aware TTS via runtime_mode.json
 # ============================================================
 
 set -u
@@ -23,6 +23,7 @@ LAST_INPUT="$BRIDGE_DIR/last_input.txt"
 BRAIN="$BRIDGE_DIR/brain.txt"
 EMOTION="$BRIDGE_DIR/emotion.txt"
 HISTORY="$BRIDGE_DIR/conversation.md"
+RUNTIME_MODE="$BRIDGE_DIR/runtime_mode.json"
 
 LOG="$VAULT_DIR/jarvis.log"
 PERSONALITY="$VAULT_DIR/JARVIS.md"
@@ -30,6 +31,7 @@ AUDIO_OUT="$VAULT_DIR/tts/last_speech.wav"
 
 SETTINGS_JSON="$VAULT_DIR/.jarvis/settings.json"
 ACTIVE_PROFILE_JSON="$VAULT_DIR/.jarvis/active_profile.json"
+PROFILES_DIR="$VAULT_DIR/.jarvis/profiles"
 
 MODEL_CONFIG="$PROJECT_DIR/config/models-config.json"
 REACT_HOST="http://127.0.0.1:7900"
@@ -122,7 +124,6 @@ route() {
   local words
   words=$(echo "$cmd" | wc -w)
 
-  # Short follow-ups stay on the same brain
   if [ "$words" -le 3 ] && [ -n "$LAST_BRAIN" ]; then
     if echo "$lower" | grep -qE "$FOLLOWUP_KEYWORDS"; then
       echo "$LAST_BRAIN"
@@ -145,7 +146,6 @@ route() {
     return
   fi
 
-  # Only use deep for stronger signals
   if echo "$lower" | grep -qE "$DEEP_KEYWORDS" && [ "$words" -ge 20 ]; then
     echo "ollama_deep"
     return
@@ -226,55 +226,79 @@ save_history() {
   fi
 }
 
-load_vault_context() {
-  local command="$1"
-  local lower
-  lower=$(echo "$command" | tr '[:upper:]' '[:lower:]')
-  local ctx=""
+get_runtime_field() {
+  local field="$1"
+  if [ -f "$RUNTIME_MODE" ]; then
+    python3 - "$RUNTIME_MODE" "$field" <<'PY'
+import json, sys
+from pathlib import Path
 
-  if [ -f "$VAULT_DIR/People/sami.md" ]; then
-    ctx+="## Owner
-$(cat "$VAULT_DIR/People/sami.md")
-
-"
+p = Path(sys.argv[1])
+field = sys.argv[2]
+try:
+    data = json.loads(p.read_text(encoding="utf-8"))
+    value = data.get(field, "")
+    if isinstance(value, bool):
+        print("true" if value else "false")
+    else:
+        print(value if value is not None else "")
+except Exception:
+    print("")
+PY
+  else
+    echo ""
   fi
+}
 
-  if [ -f "$VAULT_DIR/CLAUDE.md" ]; then
-    ctx+="$(grep -A100 '## Active Projects' "$VAULT_DIR/CLAUDE.md")
+get_runtime_persona() {
+  get_runtime_field "persona"
+}
 
-"
+get_runtime_tts_engine() {
+  local value
+  value=$(get_runtime_field "tts_engine")
+  if [ -n "$value" ]; then
+    echo "$value"
+  else
+    echo "orpheus"
   fi
+}
 
-  local project_dir=""
-  case "$lower" in
-    *stockwatch*|*bullish*|*stock*) project_dir="Projects/StockWatch" ;;
-    *caskra*|*beverage*) project_dir="Projects/Caskra" ;;
-    *social*media*) project_dir="Projects/SocialMediaManager" ;;
-    *tender*) project_dir="Projects/TenderApp" ;;
-    *travel*) project_dir="Projects/TravelBook" ;;
-    *poro-it*|*company*website*) project_dir="Projects/PoroIT" ;;
-    *rest*api*|*varha*) project_dir="Projects/RestAPI" ;;
-    *dravn*|*pipeline*) project_dir="Projects/APIPlatform" ;;
-    *jarvis*|*assistant*) project_dir="Projects/OperationJarvis" ;;
-  esac
-
-  if [ -n "$project_dir" ]; then
-    for f in "$VAULT_DIR/$project_dir/overview.md" "$VAULT_DIR/$project_dir/"*.md; do
-      if [ -f "$f" ]; then
-        ctx+="## $(basename "$f")
-$(head -60 "$f")
-
-"
-        break
-      fi
-    done
+get_runtime_tts_enabled() {
+  local value
+  value=$(get_runtime_field "tts_enabled")
+  if [ "$value" = "false" ]; then
+    echo "false"
+  else
+    echo "true"
   fi
+}
 
-  echo "$ctx"
+get_profile_voice_from_id() {
+  local profile_id="$1"
+  if [ -z "$profile_id" ]; then
+    echo ""
+    return
+  fi
+  local profile_file="$PROFILES_DIR/$profile_id.json"
+  if [ -f "$profile_file" ]; then
+    python3 - "$profile_file" <<'PY'
+import json, sys
+from pathlib import Path
+p = Path(sys.argv[1])
+try:
+    data = json.loads(p.read_text(encoding="utf-8"))
+    voice = ((data.get("voice") or {}).get("preferred") or "").strip()
+    print(voice)
+except Exception:
+    print("")
+PY
+  else
+    echo ""
+  fi
 }
 
 get_voice() {
-  # Explicit user override wins
   if [ -f "$VAULT_DIR/settings_voice.txt" ]; then
     local explicit_voice
     explicit_voice=$(tr -d '\r\n' < "$VAULT_DIR/settings_voice.txt" 2>/dev/null)
@@ -284,7 +308,17 @@ get_voice() {
     fi
   fi
 
-  # Fallback to selected profile preferred voice
+  local runtime_persona
+  runtime_persona=$(get_runtime_persona)
+  if [ -n "$runtime_persona" ]; then
+    local runtime_voice
+    runtime_voice=$(get_profile_voice_from_id "$runtime_persona")
+    if [ -n "$runtime_voice" ]; then
+      echo "$runtime_voice"
+      return
+    fi
+  fi
+
   if [ -f "$ACTIVE_PROFILE_JSON" ]; then
     local profile_voice
     profile_voice=$(python3 - "$ACTIVE_PROFILE_JSON" <<'PY'
@@ -294,8 +328,11 @@ from pathlib import Path
 p = Path(sys.argv[1])
 try:
     data = json.loads(p.read_text(encoding="utf-8"))
-    voice = ((data.get("voice") or {}).get("preferred") or "").strip()
-    print(voice)
+    if isinstance(data, dict) and data.get("active"):
+        print("")
+    else:
+        voice = ((data.get("voice") or {}).get("preferred") or "").strip()
+        print(voice)
 except Exception:
     print("")
 PY
@@ -318,13 +355,16 @@ get_personality() {
 }
 
 load_personality_file() {
-  # Primary source of truth: resolved active profile JSON
-  if [ -f "$ACTIVE_PROFILE_JSON" ]; then
-    local prompt
-    prompt=$(python3 - "$ACTIVE_PROFILE_JSON" <<'PY'
+  local runtime_persona
+  runtime_persona=$(get_runtime_persona)
+
+  if [ -n "$runtime_persona" ]; then
+    local runtime_profile="$PROFILES_DIR/$runtime_persona.json"
+    if [ -f "$runtime_profile" ]; then
+      local prompt
+      prompt=$(python3 - "$runtime_profile" <<'PY'
 import json, sys
 from pathlib import Path
-
 p = Path(sys.argv[1])
 try:
     data = json.loads(p.read_text(encoding="utf-8"))
@@ -333,35 +373,65 @@ except Exception:
     print("")
 PY
 )
+      if [ -n "$prompt" ]; then
+        log "Loaded personality from runtime persona=$runtime_persona"
+        echo "$prompt"
+        return
+      fi
+    fi
+  fi
+
+  if [ -f "$ACTIVE_PROFILE_JSON" ]; then
+    local prompt
+    prompt=$(python3 - "$ACTIVE_PROFILE_JSON" "$PROFILES_DIR" <<'PY'
+import json, sys
+from pathlib import Path
+
+active = Path(sys.argv[1])
+profiles_dir = Path(sys.argv[2])
+
+try:
+    data = json.loads(active.read_text(encoding="utf-8"))
+    if isinstance(data, dict) and data.get("active"):
+        pf = profiles_dir / f"{data['active']}.json"
+        if pf.exists():
+            pdata = json.loads(pf.read_text(encoding="utf-8"))
+            print((pdata.get("systemPrompt") or "").strip())
+        else:
+            print("")
+    else:
+        print((data.get("systemPrompt") or "").strip())
+except Exception:
+    print("")
+PY
+)
     if [ -n "$prompt" ]; then
-      log "Loaded personality from active_profile.json"
+      log "Loaded personality from active profile"
       echo "$prompt"
       return
     fi
   fi
 
-  # Secondary fallback: legacy hardcoded mode if active profile is missing
   local mode
   mode=$(get_personality)
   case "$mode" in
     friday)
       log "Fallback personality mode=friday"
-      echo "You are FRIDAY — a casual, friendly AI assistant for Sami. You call him by his first name. Upbeat, helpful, a bit chatty. Think Karen Gillan as FRIDAY. Keep responses under 3 sentences. Plain text only, no markdown."
+      echo "You are FRIDAY — a casual, friendly AI assistant for Sami. You call him by his first name. Upbeat, helpful, a bit chatty. Keep responses under 3 sentences. Plain text only, no markdown."
       return
       ;;
     edith)
       log "Fallback personality mode=edith"
-      echo "You are EDITH — Even Dead I'm The Hero. You are direct, tactical, no-nonsense. You address your user as boss. Military precision in communication. Keep responses under 3 sentences. Plain text only, no markdown."
+      echo "You are EDITH — Even Dead I'm The Hero. You are direct, tactical, no-nonsense. Keep responses under 3 sentences. Plain text only, no markdown."
       return
       ;;
     hal)
       log "Fallback personality mode=hal"
-      echo "You are HAL 9000. You are calm, polite, and slightly unsettling. You address your user as Dave regardless of their name. Keep responses under 3 sentences. Plain text only, no markdown."
+      echo "You are HAL 9000. You are calm, polite, and slightly unsettling. Keep responses under 3 sentences. Plain text only, no markdown."
       return
       ;;
   esac
 
-  # Final fallback: legacy JARVIS.md
   if [ -f "$PERSONALITY" ]; then
     log "Fallback personality from JARVIS.md"
     cat "$PERSONALITY"
@@ -376,19 +446,23 @@ call_ollama() {
   local route="$2"
   local command="$3"
 
-  local system
-  system=$(load_personality_file)
-  system+="
-
-Plain text only, no markdown. Max 3 sentences."
-
   echo "ollama:$model" > "$BRAIN"
   log "OLLAMA route=$route model=$model"
 
-  local messages
-  messages=$(build_history_json "$system" "$command")
   local payload
-  payload="{\"model\":\"$model\",\"route\":\"$route\",\"messages\":$messages,\"stream\":false}"
+  payload=$(python3 - "$model" "$route" "$command" <<'PY'
+import json, sys
+model = sys.argv[1]
+route = sys.argv[2]
+command = sys.argv[3]
+print(json.dumps({
+    "model": model,
+    "route": route,
+    "messages": [{"role": "user", "content": command}],
+    "stream": False
+}, ensure_ascii=False))
+PY
+)
 
   local result
   result=$(curl -sf --max-time 300 "$REACT_HOST/api/chat" \
@@ -413,7 +487,7 @@ call_claude() {
   echo "claude" > "$BRAIN"
 
   if [ -f "$HISTORY" ] && [ -s "$HISTORY" ]; then
-    history=$(tail -"$MAX_HISTORY" "$HISTORY" | sed 's/^user|/User: /' | sed 's/^assistant|/JARVIS: /')
+    history=$(tail -"$MAX_HISTORY" "$HISTORY" | sed 's/^user|/User: /' | sed 's/^assistant|/Jarvis: /')
   fi
 
   local full_prompt="$system
@@ -425,7 +499,7 @@ $history
 
 The user just said: \"$command\"
 
-Respond as JARVIS. Plain text only, no markdown, max 4 sentences."
+Respond in plain text only, no markdown, max 4 sentences."
 
   local cloud_config="$VAULT_DIR/config/cloud_llm.json"
   if [ -f "$cloud_config" ]; then
@@ -450,7 +524,24 @@ Respond as JARVIS. Plain text only, no markdown, max 4 sentences."
 }
 
 orpheus_available() {
-  return 1
+  local tts_engine
+  tts_engine=$(get_runtime_tts_engine)
+
+  if [ "$tts_engine" != "orpheus" ]; then
+    return 1
+  fi
+
+  curl -sf --max-time 2 "$TTS_HOST/health" >/dev/null 2>&1
+}
+
+normalize_tts_text() {
+  local text="$1"
+  text=$(echo "$text" | sed \
+    -e 's/\bJARVIS\b/Jarvis/g' \
+    -e 's/\bFRIDAY\b/Friday/g' \
+    -e 's/\bEDITH\b/Edith/g' \
+    -e 's/\bHAL\b/Hal/g')
+  echo "$text"
 }
 
 speak_orpheus() {
@@ -458,10 +549,12 @@ speak_orpheus() {
   local voice
   voice=$(get_voice)
   log "TTS [Orpheus] voice=$voice"
+
   curl -sf --max-time 30 "$TTS_HOST/speak" \
     -H "Content-Type: application/json" \
     -d "{\"text\": $(echo "$text" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read().strip()))'), \"voice\": \"$voice\"}" \
     -o "$AUDIO_OUT" 2>/dev/null
+
   if [ -f "$AUDIO_OUT" ] && [ -s "$AUDIO_OUT" ]; then
     play_audio "$AUDIO_OUT"
   else
@@ -496,25 +589,50 @@ play_audio() {
 
 speak_fallback() {
   local text="$1"
+  text=$(normalize_tts_text "$text")
+
   local safe_text
   safe_text=$(echo "$text" | sed "s/'/''/g")
+
+  local wav_file="$VAULT_DIR/tts/last_speech.wav"
+  local padded_wav="$VAULT_DIR/tts/last_speech_padded.wav"
   local wav_out
-  wav_out=$(wslpath -w "$VAULT_DIR/tts/last_speech.wav" 2>/dev/null)
+  wav_out=$(wslpath -w "$wav_file" 2>/dev/null)
+  local padded_out
+  padded_out=$(wslpath -w "$padded_wav" 2>/dev/null)
 
   if command -v powershell.exe &>/dev/null; then
     log "TTS [PowerShell]"
+
     powershell.exe -Command "
       Add-Type -AssemblyName System.Speech;
       \$s = New-Object System.Speech.Synthesis.SpeechSynthesizer;
       \$s.Rate = 0;
+      \$null = \$s.GetInstalledVoices();
       \$s.SetOutputToWaveFile('$wav_out');
       \$s.Speak('$safe_text');
       \$s.SetOutputToNull();
       \$s.Dispose()
     " 2>/dev/null
 
-    if [ -f "$VAULT_DIR/tts/last_speech.wav" ]; then
-      play_audio "$VAULT_DIR/tts/last_speech.wav"
+    if [ -f "$wav_file" ]; then
+      if [ -n "${FFMPEG_EXE:-}" ] && [ -f "$FFMPEG_EXE" ]; then
+        "$FFMPEG_EXE" -y \
+          -f lavfi -i anullsrc=r=22050:cl=mono \
+          -i "$wav_out" \
+          -filter_complex "[0:a]atrim=0:0.30[s0];[s0][1:a]concat=n=2:v=0:a=1[a]" \
+          -map "[a]" \
+          "$padded_out" 2>/dev/null
+
+        if [ -f "$padded_wav" ]; then
+          play_audio "$padded_wav"
+          rm -f "$padded_wav" 2>/dev/null
+        else
+          play_audio "$wav_file"
+        fi
+      else
+        play_audio "$wav_file"
+      fi
     fi
   elif command -v espeak &>/dev/null; then
     log "TTS [espeak]"
@@ -527,16 +645,22 @@ speak_fallback() {
 speak() {
   local text="$1"
   local next_state="${2:-standby}"
-  if [ "$WATCHER_TTS" = "on" ]; then
-    pkill -f "SpeechSynthesizer" 2>/dev/null
-    if orpheus_available; then
-      speak_orpheus "$text"
-      echo "$next_state" > "$STATE"
-    else
-      (speak_fallback "$text"; echo "$next_state" > "$STATE") &
-    fi
-  else
+
+  local tts_enabled
+  tts_enabled=$(get_runtime_tts_enabled)
+
+  if [ "$WATCHER_TTS" != "on" ] || [ "$tts_enabled" = "false" ]; then
     echo "$next_state" > "$STATE"
+    return
+  fi
+
+  pkill -f "SpeechSynthesizer" 2>/dev/null
+
+  if orpheus_available; then
+    speak_orpheus "$text"
+    echo "$next_state" > "$STATE"
+  else
+    (speak_fallback "$text"; echo "$next_state" > "$STATE") &
   fi
 }
 
@@ -577,16 +701,13 @@ reload_route_model() {
 
 log "=== JARVIS WATCHER ONLINE ==="
 log "Monitoring input: $INPUT"
+log "Monitoring runtime mode: $RUNTIME_MODE"
 log "Models -> fast=$OLLAMA_FAST reason=$OLLAMA_REASON code=$OLLAMA_CODE deep=$OLLAMA_DEEP"
+
 if [ -f "$ACTIVE_PROFILE_JSON" ]; then
   log "Profile source: $ACTIVE_PROFILE_JSON"
 else
   log "Profile source: legacy fallback mode"
-fi
-if orpheus_available; then
-  log "TTS: Orpheus"
-else
-  log "TTS: PowerShell Windows audio"
 fi
 
 while true; do
@@ -698,7 +819,7 @@ while true; do
     fi
 
     speak "$RESPONSE" "$NEXT_STATE"
-    log "Ready (brain=$BRAIN_CHOICE)"
+    log "Ready (brain=$BRAIN_CHOICE tts_engine=$(get_runtime_tts_engine) persona=$(get_runtime_persona))"
   fi
 
   sleep 0.3

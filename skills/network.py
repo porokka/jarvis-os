@@ -8,6 +8,7 @@ builds a topology map for the HUD SVG renderer.
 import json
 import re
 import subprocess
+import time
 from pathlib import Path
 
 SKILL_NAME = "network"
@@ -58,23 +59,23 @@ OUI_MAP = {
 PORT_TYPE_MAP = {
     80: "web",
     443: "web",
-    5555: "shield",      # ADB
-    8008: "cast",        # Chromecast/Cast
+    5555: "shield",
+    8008: "cast",
     8443: "cast",
     9100: "printer",
     515: "printer",
-    631: "printer",      # CUPS/IPP
-    5000: "nas",         # Synology DSM
+    631: "printer",
+    5000: "nas",
     5001: "nas",
     8080: "web",
-    3689: "media",       # DAAP
-    1400: "speaker",     # Sonos
-    8200: "media",       # MiniDLNA
-    32400: "media",      # Plex
-    554: "camera",       # RTSP
-    22: "server",        # SSH
-    3000: "server",      # Dev server
-    11434: "ai",         # Ollama
+    3689: "media",
+    1400: "speaker",
+    8200: "media",
+    32400: "media",
+    554: "camera",
+    22: "server",
+    3000: "server",
+    11434: "ai",
 }
 
 DEVICE_ICONS = {
@@ -106,7 +107,6 @@ def _resolve_hostname(ip: str) -> str:
     try:
         import socket
         name, _, _ = socket.gethostbyaddr(ip)
-        # Strip domain suffix
         if "." in name:
             name = name.split(".")[0]
         return name
@@ -120,14 +120,11 @@ def _identify_device(ip: str, mac: str, hostname: str, ports: list) -> dict:
     device_type = "unknown"
     vendor = ""
 
-    # Check MAC OUI first
     if mac_prefix in OUI_MAP:
         device_type, vendor = OUI_MAP[mac_prefix]
 
-    # Infer from hostname (most reliable — runs before port check) — most reliable when MAC is unavailable
     hn = hostname.lower() if hostname else ""
 
-    # Infrastructure devices (switches, APs, routers)
     if any(x in hn for x in ["usw-", "us-8", "us-16", "us-24", "us-48", "usw "]):
         device_type, vendor = "switch", "Ubiquiti"
     elif any(x in hn for x in ["uap-", "u6-", "unifi-ap", "uap ", "nanohd", "flexhd", "lite-8-poe"]):
@@ -136,7 +133,6 @@ def _identify_device(ip: str, mac: str, hostname: str, ports: list) -> dict:
         device_type, vendor = "switch", "Ubiquiti"
     elif "unifi" in hn and device_type == "unknown":
         device_type, vendor = "router", "Ubiquiti"
-    # Media/entertainment
     elif "shield" in hn:
         device_type = "shield"
     elif any(x in hn for x in ["lgwebos", "lgtv", "lg-tv"]):
@@ -149,9 +145,8 @@ def _identify_device(ip: str, mac: str, hostname: str, ports: list) -> dict:
         device_type = "speaker"
     elif "denon" in hn or "marantz" in hn:
         device_type, vendor = "receiver", "Denon"
-    # Computers
     elif any(x in hn for x in ["macbook", "macpro", "imac"]):
-        device_type, vendor = "laptop" if "book" in hn else "desktop", "Apple"
+        device_type, vendor = ("laptop" if "book" in hn else "desktop"), "Apple"
     elif any(x in hn for x in ["iphone", "ipad"]):
         device_type, vendor = "phone", "Apple"
     elif any(x in hn for x in ["android", "galaxy", "s20", "s21", "s22", "s23", "s24", "pixel"]):
@@ -160,32 +155,26 @@ def _identify_device(ip: str, mac: str, hostname: str, ports: list) -> dict:
         device_type = "desktop"
     elif any(x in hn for x in ["laptop"]):
         device_type = "laptop"
-    # IoT
     elif any(x in hn for x in ["amazon-", "echo", "alexa", "fire"]):
         device_type, vendor = "iot", "Amazon"
     elif any(x in hn for x in ["dreame", "vacuum", "roborock", "roomba"]):
         device_type = "iot"
     elif any(x in hn for x in ["hue", "tradfri", "ikea"]):
         device_type = "iot"
-    # Printers
     elif any(x in hn for x in ["printer", "epson", "hp-", "canon", "lulzbot", "lutzl"]):
         device_type = "printer"
-    # NAS
     elif any(x in hn for x in ["synology", "diskstation", "nas"]):
         device_type, vendor = "nas", "Synology"
 
-    # Fallback: port-based (only if still unknown)
     if device_type == "unknown":
         for port in ports:
             if port in PORT_TYPE_MAP:
                 device_type = PORT_TYPE_MAP[port]
                 break
 
-    # Gateway is the router
     if ip.endswith(".1") and device_type == "unknown":
         device_type = "router"
 
-    # Try DNS reverse lookup if no hostname
     if not hostname or hostname == ip:
         hostname = _resolve_hostname(ip) or ip
 
@@ -203,20 +192,22 @@ def _identify_device(ip: str, mac: str, hostname: str, ports: list) -> dict:
 def exec_scan_network() -> str:
     """Full network scan — discover devices, identify types, save topology."""
     try:
-        # Try with sudo for MAC addresses, fall back to unprivileged scan
         nmap_cmd = ["nmap", "-sn", "-oX", "-", "192.168.0.0/24"]
         result = subprocess.run(
             ["sudo", "-n"] + nmap_cmd,
-            capture_output=True, text=True, timeout=120,
+            capture_output=True,
+            text=True,
+            timeout=120,
         )
         if result.returncode != 0:
             result = subprocess.run(
                 nmap_cmd,
-                capture_output=True, text=True, timeout=120,
+                capture_output=True,
+                text=True,
+                timeout=120,
             )
 
         devices = []
-        # Parse nmap XML output
         current_ip = ""
         current_mac = ""
         current_hostname = ""
@@ -225,11 +216,9 @@ def exec_scan_network() -> str:
         for line in result.stdout.split("\n"):
             line = line.strip()
 
-            # IP address
             m = re.search(r'addr="(\d+\.\d+\.\d+\.\d+)"', line)
-            if m and "addrtype=\"ipv4\"" in line:
+            if m and 'addrtype="ipv4"' in line:
                 if current_ip:
-                    # Save previous device
                     dev = _identify_device(current_ip, current_mac, current_hostname, [])
                     if current_vendor and not dev["vendor"]:
                         dev["vendor"] = current_vendor
@@ -239,86 +228,84 @@ def exec_scan_network() -> str:
                 current_hostname = ""
                 current_vendor = ""
 
-            # MAC address
             m = re.search(r'addr="([0-9A-F:]{17})"', line)
-            if m and "addrtype=\"mac\"" in line:
+            if m and 'addrtype="mac"' in line:
                 current_mac = m.group(1)
 
-            # Vendor from nmap
             m = re.search(r'vendor="([^"]*)"', line)
             if m:
                 current_vendor = m.group(1)
 
-            # Hostname
             m = re.search(r'name="([^"]*)"', line)
             if m and "hostname" in line:
                 current_hostname = m.group(1)
 
-        # ARP table lookup for MAC addresses (works without root)
         arp_macs = {}
         try:
             arp_result = subprocess.run(["arp", "-a"], capture_output=True, text=True, timeout=10)
             for line in arp_result.stdout.split("\n"):
-                m = re.search(r'(\d+\.\d+\.\d+\.\d+)\s+.*?([\da-fA-F]{2}[:-][\da-fA-F]{2}[:-][\da-fA-F]{2}[:-][\da-fA-F]{2}[:-][\da-fA-F]{2}[:-][\da-fA-F]{2})', line)
+                m = re.search(
+                    r'(\d+\.\d+\.\d+\.\d+)\s+.*?([\da-fA-F]{2}[:-][\da-fA-F]{2}[:-][\da-fA-F]{2}[:-][\da-fA-F]{2}[:-][\da-fA-F]{2}[:-][\da-fA-F]{2})',
+                    line,
+                )
                 if m:
                     arp_macs[m.group(1)] = m.group(2).upper().replace("-", ":")
         except Exception:
             pass
 
-        # Don't forget last device
         if current_ip:
             dev = _identify_device(current_ip, current_mac, current_hostname, [])
             if current_vendor and not dev["vendor"]:
                 dev["vendor"] = current_vendor
             devices.append(dev)
 
-        # Fill in MACs from ARP table
         for d in devices:
             if not d["mac"] and d["ip"] in arp_macs:
                 d["mac"] = arp_macs[d["ip"]]
-                # Re-identify with MAC info
                 mac_prefix = d["mac"][:8].lower()
                 if mac_prefix in OUI_MAP and d["type"] == "unknown":
                     d["type"], d["vendor"] = OUI_MAP[mac_prefix]
                     d["icon"] = DEVICE_ICONS.get(d["type"], "?")
 
-        # Port scan on discovered devices for better identification
-        ips = [d["ip"] for d in devices if not d["ip"].endswith(".1")][:20]  # limit
+        ips = [d["ip"] for d in devices if not d["ip"].endswith(".1")][:20]
         if ips:
             port_result = subprocess.run(
-                ["nmap", "-p", "22,80,443,554,631,1400,3000,3689,5000,5001,5555,8008,8080,8200,8443,9100,11434,32400",
-                 "--open", "-oG", "-"] + ips,
-                capture_output=True, text=True, timeout=60,
+                [
+                    "nmap",
+                    "-p",
+                    "22,80,443,554,631,1400,3000,3689,5000,5001,5555,8008,8080,8200,8443,9100,11434,32400",
+                    "--open",
+                    "-oG",
+                    "-",
+                ] + ips,
+                capture_output=True,
+                text=True,
+                timeout=60,
             )
             for line in port_result.stdout.split("\n"):
                 if "/open" in line:
                     parts = line.split()
                     ip = parts[1] if len(parts) > 1 else ""
                     ports = [int(p.split("/")[0]) for p in line.split() if "/open" in p]
-                    # Update device with ports
                     for d in devices:
                         if d["ip"] == ip:
                             d["ports"] = ports
-                            # Re-identify with port info
                             if d["type"] == "unknown" and ports:
                                 updated = _identify_device(ip, d["mac"], d["hostname"], ports)
                                 d["type"] = updated["type"]
                                 d["icon"] = updated["icon"]
 
-        # Sort: router first, then by IP
         devices.sort(key=lambda d: (0 if d["type"] == "router" else 1, d["ip"]))
 
-        # Save topology
         topology = {
             "devices": devices,
             "gateway": next((d["ip"] for d in devices if d["type"] == "router"), "192.168.0.1"),
             "subnet": "192.168.0.0/24",
-            "scan_time": __import__("time").time(),
+            "scan_time": time.time(),
         }
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
         TOPOLOGY_FILE.write_text(json.dumps(topology, indent=2), encoding="utf-8")
 
-        # Build report
         lines = [f"Found {len(devices)} devices on 192.168.0.0/24:\n"]
         for d in devices:
             name = d["hostname"] if d["hostname"] != d["ip"] else ""
@@ -326,7 +313,7 @@ def exec_scan_network() -> str:
             port_str = f" ports:{','.join(str(p) for p in d['ports'])}" if d["ports"] else ""
             lines.append(f"  {d['icon']:>3} {d['ip']:<16} {d['mac']:<18} {name}{vendor_str}{port_str}")
 
-        lines.append(f"\nTopology saved to config/network_topology.json")
+        lines.append("\nTopology saved to config/network_topology.json")
         return "\n".join(lines)
 
     except subprocess.TimeoutExpired:
@@ -343,14 +330,12 @@ def get_topology() -> dict:
         return {"devices": [], "gateway": "192.168.0.1", "subnet": "192.168.0.0/24"}
 
 
-# -- Tool definitions --
-
 TOOLS = [
     {
         "type": "function",
         "function": {
             "name": "scan_network",
-            "description": "Scan the local network for all devices. Identifies device types (PC, Shield, TV, phone, printer, IoT) by MAC vendor and open ports. Saves topology map.",
+            "description": "Scan the local network for all devices. Identifies device types such as PC, Shield, TV, phone, printer, and IoT by MAC vendor and open ports. Saves topology map.",
             "parameters": {
                 "type": "object",
                 "properties": {},
@@ -364,5 +349,73 @@ TOOL_MAP = {
 }
 
 KEYWORDS = {
-    "scan_network": ["scan", "network", "devices", "find shield", "what devices", "discover", "topology", "network map"],
+    "scan_network": [
+        "scan",
+        "network",
+        "devices",
+        "find shield",
+        "what devices",
+        "discover",
+        "topology",
+        "network map",
+        "lan",
+    ],
+}
+
+SKILL_META = {
+    "intent_aliases": [
+        "network",
+        "network scan",
+        "scan network",
+        "device discovery",
+        "topology",
+        "network map",
+        "lan scan",
+    ],
+    "keywords": [
+        "network",
+        "scan network",
+        "what devices are on the network",
+        "device discovery",
+        "discover devices",
+        "network topology",
+        "network map",
+        "lan",
+        "scan lan",
+        "find devices",
+        "find shield",
+    ],
+    "route": "reason",
+    "tools": {
+        "scan_network": {
+            "intent_aliases": [
+                "scan network",
+                "network scan",
+                "device discovery",
+                "network topology",
+                "network map",
+            ],
+            "keywords": [
+                "scan",
+                "network",
+                "devices",
+                "discover",
+                "topology",
+                "network map",
+                "lan",
+                "what devices",
+                "find shield",
+                "scan lan",
+            ],
+            "direct_match": [
+                "scan network",
+                "network scan",
+                "scan lan",
+                "network map",
+                "network topology",
+                "what devices are on the network",
+            ],
+            "route": "reason",
+        }
+    },
 }

@@ -10,18 +10,21 @@ Gmail setup: enable "App Passwords" in Google account security.
 
 import json
 import email
+import email.header
 import email.mime.text
 import email.mime.multipart
 import imaplib
 import smtplib
-from datetime import datetime
+import os
 from pathlib import Path
+from scripts.keepass_secrets import get_secret
+
 
 SKILL_NAME = "email"
 SKILL_DESCRIPTION = "Email — send, read inbox, search via SMTP/IMAP"
 
 CONFIG_FILE = Path(__file__).parent.parent / "config" / "email.json"
-VAULT_DIR = Path("/mnt/d/Jarvis_vault") if __import__("os").name != "nt" else Path("D:/Jarvis_vault")
+VAULT_DIR = Path("/mnt/d/Jarvis_vault") if os.name != "nt" else Path("D:/Jarvis_vault")
 
 
 def _load_config() -> dict:
@@ -36,8 +39,9 @@ def _send_email(to: str, subject: str, body: str) -> str:
     cfg = _load_config()
     smtp_host = cfg.get("smtp_host", "smtp.gmail.com")
     smtp_port = cfg.get("smtp_port", 587)
-    username = cfg.get("username", "")
-    password = cfg.get("password", "")
+    cred = get_secret(cfg["credential_ref"], caller="email")
+    username = cred["username"]
+    password = cred["password"]
     from_name = cfg.get("from_name", "JARVIS")
 
     if not username or not password:
@@ -89,13 +93,20 @@ def _read_inbox(count: int = 10, folder: str = "INBOX") -> str:
             for num in recent:
                 _, data = mail.fetch(num, "(RFC822)")
                 msg = email.message_from_bytes(data[0][1])
+
                 sender = msg.get("From", "?")
                 subject = msg.get("Subject", "(no subject)")
                 date = msg.get("Date", "")[:20]
-                # Decode subject
+
                 if "=?" in subject:
                     decoded = email.header.decode_header(subject)
-                    subject = str(decoded[0][0], decoded[0][1] or "utf-8") if isinstance(decoded[0][0], bytes) else str(decoded[0][0])
+                    first = decoded[0]
+                    subject = (
+                        str(first[0], first[1] or "utf-8")
+                        if isinstance(first[0], bytes)
+                        else str(first[0])
+                    )
+
                 lines.append(f"  {date:20s} {sender[:30]:30s} {subject[:50]}")
 
             return f"Inbox ({len(lines)} recent):\n" + "\n".join(lines)
@@ -118,7 +129,6 @@ def _search_email(query: str, count: int = 5) -> str:
             mail.login(username, password)
             mail.select("INBOX")
 
-            # Search by subject or from
             _, msg_nums = mail.search(None, f'(OR SUBJECT "{query}" FROM "{query}")')
             nums = msg_nums[0].split()
 
@@ -163,7 +173,6 @@ def _read_email(index: int = 0) -> str:
             if not nums:
                 return "Inbox is empty."
 
-            # Get the nth most recent
             target = nums[-(index + 1)]
             _, data = mail.fetch(target, "(RFC822)")
             msg = email.message_from_bytes(data[0][1])
@@ -172,15 +181,18 @@ def _read_email(index: int = 0) -> str:
             subject = msg.get("Subject", "(no subject)")
             date = msg.get("Date", "")
 
-            # Get body
             body = ""
             if msg.is_multipart():
                 for part in msg.walk():
                     if part.get_content_type() == "text/plain":
-                        body = part.get_payload(decode=True).decode("utf-8", errors="replace")
-                        break
+                        payload = part.get_payload(decode=True)
+                        if payload:
+                            body = payload.decode("utf-8", errors="replace")
+                            break
             else:
-                body = msg.get_payload(decode=True).decode("utf-8", errors="replace")
+                payload = msg.get_payload(decode=True)
+                if payload:
+                    body = payload.decode("utf-8", errors="replace")
 
             return f"From: {sender}\nDate: {date}\nSubject: {subject}\n\n{body[:2000]}"
     except Exception as e:
@@ -196,11 +208,10 @@ def exec_email(action: str, to: str = "", subject: str = "", body: str = "", que
             return "Specify to and subject. Example: send to@example.com 'Meeting' 'See you at 3pm'"
         return _send_email(to, subject, body or "(no body)")
 
-    elif action == "inbox" or action == "recent":
+    elif action in ("inbox", "recent"):
         return _read_inbox()
 
     elif action == "read":
-        # Read most recent email
         return _read_email(0)
 
     elif action == "search":
@@ -254,11 +265,78 @@ TOOLS = [
     },
 ]
 
-TOOL_MAP = {"email": exec_email}
+TOOL_MAP = {
+    "email": exec_email,
+}
 
 KEYWORDS = {
     "email": [
-        "email", "mail", "send email", "inbox", "check email",
-        "read email", "compose", "reply",
+        "email",
+        "mail",
+        "send email",
+        "inbox",
+        "check email",
+        "read email",
+        "compose",
+        "reply",
+        "search email",
     ],
+}
+
+SKILL_META = {
+    "intent_aliases": [
+        "email",
+        "mail",
+        "inbox",
+        "smtp",
+        "imap",
+    ],
+    "keywords": [
+        "email",
+        "mail",
+        "send email",
+        "check email",
+        "read email",
+        "search email",
+        "open inbox",
+        "show inbox",
+        "compose email",
+        "reply by email",
+        "smtp",
+        "imap",
+    ],
+    "route": "reason",
+    "tools": {
+        "email": {
+            "intent_aliases": [
+                "email",
+                "mail",
+                "inbox",
+                "send email",
+                "check email",
+            ],
+            "keywords": [
+                "email",
+                "mail",
+                "send email",
+                "check email",
+                "read email",
+                "search email",
+                "open inbox",
+                "show inbox",
+                "compose email",
+                "reply by email",
+            ],
+            "direct_match": [
+                "send email",
+                "check email",
+                "read email",
+                "search email",
+                "open inbox",
+                "show inbox",
+                "compose email",
+            ],
+            "route": "reason",
+        }
+    },
 }

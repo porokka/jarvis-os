@@ -17,13 +17,14 @@ CONFIG_DIR = Path(__file__).parent.parent / "config"
 KEY_FILE = CONFIG_DIR / "lg_tv_key.json"
 TV_CONFIG = CONFIG_DIR / "lg_tv.json"
 
-# Load IP from config, fallback to discovery
+
 def _get_tv_ip() -> str:
     try:
         data = json.loads(TV_CONFIG.read_text(encoding="utf-8"))
         return data.get("ip", "")
     except Exception:
         return ""
+
 
 TV_IP = _get_tv_ip()
 
@@ -38,7 +39,7 @@ def _load_key() -> str | None:
 
 def _save_key(key: str):
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    KEY_FILE.write_text(json.dumps({"client_key": key, "ip": TV_IP}), encoding="utf-8")
+    KEY_FILE.write_text(json.dumps({"client_key": key, "ip": TV_IP}, indent=2), encoding="utf-8")
 
 
 def _run_async(coro):
@@ -56,13 +57,15 @@ def _run_async(coro):
 
 async def _connect():
     from aiowebostv import WebOsClient
+
     client = WebOsClient(TV_IP)
     client_key = _load_key()
     await client.connect(client_key=client_key)
-    # Save key if new pairing
+
     if client.client_key and client.client_key != client_key:
         _save_key(client.client_key)
-        print(f"[LG_TV] Paired! Key saved.")
+        print("[LG_TV] Paired! Key saved.")
+
     return client
 
 
@@ -156,7 +159,10 @@ async def _send_command(action: str, value: str = "") -> str:
             return f"Notification sent: {value}"
 
         else:
-            return f"Unknown action '{action}'. Use: power_off, volume_up/down/set, mute/unmute, play/pause/stop, input, app, info, screen_off/on, notification"
+            return (
+                f"Unknown action '{action}'. Use: power_off, volume_up/down/set, mute/unmute, "
+                "play/pause/stop, input, app, info, screen_off/on, notification"
+            )
 
     except Exception as e:
         if "rejected" in str(e).lower() or "pair" in str(e).lower():
@@ -167,8 +173,6 @@ async def _send_command(action: str, value: str = "") -> str:
 def exec_lg_tv(action: str, value: str = "") -> str:
     return _run_async(_send_command(action, value))
 
-
-# -- Tool definitions --
 
 TOOLS = [
     {
@@ -199,5 +203,84 @@ TOOL_MAP = {
 }
 
 KEYWORDS = {
-    "lg_tv": ["tv", "lg", "television", "screen", "oled", "channel", "tv volume", "tv input", "hdmi", "screen off", "screen on"],
+    "lg_tv": [
+        "tv",
+        "lg",
+        "television",
+        "screen",
+        "oled",
+        "channel",
+        "tv volume",
+        "tv input",
+        "hdmi",
+        "screen off",
+        "screen on",
+        "netflix",
+        "youtube",
+    ],
+}
+
+SKILL_META = {
+    "intent_aliases": [
+        "lg tv",
+        "tv",
+        "television",
+        "webos",
+        "smart tv",
+    ],
+    "keywords": [
+        "lg tv",
+        "tv",
+        "television",
+        "screen",
+        "oled",
+        "webos",
+        "tv volume",
+        "tv input",
+        "hdmi",
+        "screen off",
+        "screen on",
+        "netflix",
+        "youtube",
+        "tv app",
+    ],
+    "route": "reason",
+    "tools": {
+        "lg_tv": {
+            "intent_aliases": [
+                "lg tv",
+                "tv",
+                "television",
+                "webos",
+                "smart tv",
+            ],
+            "keywords": [
+                "tv",
+                "lg",
+                "television",
+                "screen",
+                "oled",
+                "channel",
+                "tv volume",
+                "tv input",
+                "hdmi",
+                "screen off",
+                "screen on",
+                "netflix",
+                "youtube",
+                "pause tv",
+                "play tv",
+            ],
+            "direct_match": [
+                "lg tv",
+                "tv volume",
+                "tv input",
+                "screen off",
+                "screen on",
+                "pause tv",
+                "play tv",
+            ],
+            "route": "reason",
+        }
+    },
 }

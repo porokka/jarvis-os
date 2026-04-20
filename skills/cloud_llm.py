@@ -15,6 +15,8 @@ Supported providers:
 """
 
 import json
+import subprocess
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -129,29 +131,44 @@ def _call_google(url: str, api_key: str, model: str, prompt: str, system: str = 
     contents.append({"role": "user", "parts": [{"text": prompt}]})
 
     payload = json.dumps({"contents": contents}).encode("utf-8")
-    req = urllib.request.Request(actual_url, data=payload,
-                                 headers={"Content-Type": "application/json"})
+    req = urllib.request.Request(
+        actual_url,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+    )
     with urllib.request.urlopen(req, timeout=60) as resp:
         data = json.loads(resp.read().decode("utf-8"))
     return data["candidates"][0]["content"]["parts"][0]["text"]
 
 
-def exec_cloud_llm(provider: str, prompt: str, model: str = "", system: str = "", use_tools: str = "no") -> str:
+def exec_cloud_llm(
+    provider: str,
+    prompt: str,
+    model: str = "",
+    system: str = "",
+    use_tools: str = "no",
+) -> str:
     """Call a cloud LLM provider. Set use_tools=yes for tool-augmented calls."""
     provider = provider.lower().strip()
 
     # Tool-augmented call via cloud_react.py
     if use_tools.lower() in ("yes", "true", "1"):
-        import subprocess
         scripts_dir = Path(__file__).parent.parent / "scripts"
         try:
             result = subprocess.run(
-                ["python3", str(scripts_dir / "cloud_react.py"),
-                 "--provider", provider,
-                 "--prompt", prompt,
-                 "--system", system or "You are JARVIS. Use tools when needed. Concise responses.",
-                 ] + (["--model", model] if model else []),
-                capture_output=True, text=True, timeout=120,
+                [
+                    "python3",
+                    str(scripts_dir / "cloud_react.py"),
+                    "--provider",
+                    provider,
+                    "--prompt",
+                    prompt,
+                    "--system",
+                    system or "You are JARVIS. Use tools when needed. Concise responses.",
+                ] + (["--model", model] if model else []),
+                capture_output=True,
+                text=True,
+                timeout=120,
             )
             output = result.stdout.strip()
             if output:
@@ -182,7 +199,6 @@ def exec_cloud_llm(provider: str, prompt: str, model: str = "", system: str = ""
     prov = PROVIDERS[provider]
     model = model or provider_cfg.get("model") or prov["default_model"]
 
-    # Build headers
     headers = {"Content-Type": "application/json"}
     if prov.get("auth_header"):
         prefix = prov.get("auth_prefix", "")
@@ -210,8 +226,6 @@ def exec_cloud_llm(provider: str, prompt: str, model: str = "", system: str = ""
         return f"{provider} error: {e}"
 
 
-# -- Tool definitions --
-
 TOOLS = [
     {
         "type": "function",
@@ -237,6 +251,10 @@ TOOLS = [
                         "type": "string",
                         "description": "System prompt (optional)",
                     },
+                    "use_tools": {
+                        "type": "string",
+                        "description": "Use tool-augmented cloud_react flow: yes or no (optional)",
+                    },
                 },
                 "required": ["provider", "prompt"],
             },
@@ -250,7 +268,95 @@ TOOL_MAP = {
 
 KEYWORDS = {
     "cloud_llm": [
-        "claude", "gpt", "gemini", "groq", "mistral", "openai",
-        "cloud", "api", "ask claude", "ask gpt",
+        "claude",
+        "gpt",
+        "gemini",
+        "groq",
+        "mistral",
+        "openai",
+        "openrouter",
+        "cloud",
+        "api",
+        "ask claude",
+        "ask gpt",
+        "cloud llm",
     ],
+}
+
+SKILL_META = {
+    "intent_aliases": [
+        "cloud llm",
+        "cloud model",
+        "cloud api",
+        "claude",
+        "gpt",
+        "gemini",
+        "openai",
+        "groq",
+        "mistral",
+        "openrouter",
+    ],
+    "keywords": [
+        "cloud llm",
+        "cloud model",
+        "cloud api",
+        "ask claude",
+        "ask gpt",
+        "ask gemini",
+        "call openai",
+        "call anthropic",
+        "call groq",
+        "call mistral",
+        "call openrouter",
+        "use claude api",
+        "use gpt api",
+        "use gemini api",
+    ],
+    "route": "reason",
+    "tools": {
+        "cloud_llm": {
+            "intent_aliases": [
+                "cloud llm",
+                "cloud api",
+                "ask claude",
+                "ask gpt",
+                "ask gemini",
+                "openai",
+                "anthropic",
+                "groq",
+                "mistral",
+                "openrouter",
+            ],
+            "keywords": [
+                "claude",
+                "gpt",
+                "gemini",
+                "groq",
+                "mistral",
+                "openai",
+                "openrouter",
+                "cloud llm",
+                "cloud api",
+                "ask claude",
+                "ask gpt",
+                "ask gemini",
+                "call openai",
+                "call anthropic",
+                "call groq",
+                "call mistral",
+                "call openrouter",
+            ],
+            "direct_match": [
+                "ask claude",
+                "ask gpt",
+                "ask gemini",
+                "cloud llm",
+                "cloud api",
+                "use claude api",
+                "use gpt api",
+                "use gemini api",
+            ],
+            "route": "reason",
+        }
+    },
 }

@@ -46,6 +46,8 @@ bridge/
 # Next.js
 .next/
 app/.next/
+# Secrets management
+scripts/keepass_secrets.py
 
 # Personal configs (use .example files as templates)
 config/denon.json

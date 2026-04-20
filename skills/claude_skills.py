@@ -3,17 +3,19 @@ JARVIS Skill — Claude Code skills browser (list and load vault skills).
 """
 
 from pathlib import Path
+import os
 
 SKILL_NAME = "claude_skills"
 SKILL_DESCRIPTION = "Browse and load Claude Code skills from the vault"
 
-VAULT_DIR = Path("D:/Jarvis_vault") if __import__("os").name == "nt" else Path("/mnt/d/Jarvis_vault")
+VAULT_DIR = Path("D:/Jarvis_vault") if os.name == "nt" else Path("/mnt/d/Jarvis_vault")
 SKILLS_DIR = VAULT_DIR / ".claude" / "skills"
 
 
 def exec_list_skills() -> str:
     if not SKILLS_DIR.exists():
         return "No skills directory found."
+
     skills = []
     for d in sorted(SKILLS_DIR.iterdir()):
         if d.is_dir() and (d / "SKILL.md").exists():
@@ -24,6 +26,7 @@ def exec_list_skills() -> str:
                     desc = line.replace("description:", "").strip()[:100]
                     break
             skills.append(f"  {d.name} — {desc}")
+
     return "Available skills:\n" + "\n".join(skills) if skills else "No skills found."
 
 
@@ -35,6 +38,7 @@ def exec_use_skill(name: str) -> str:
             if matches:
                 return f"Skill '{name}' not found. Did you mean: {', '.join(matches)}?"
         return f"Skill '{name}' not found. Use list_skills to see available skills."
+
     try:
         return skill_path.read_text(encoding="utf-8")[:12000]
     except Exception as e:
@@ -58,7 +62,10 @@ TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "name": {"type": "string", "description": "Skill name, e.g. frontend-design"}
+                    "name": {
+                        "type": "string",
+                        "description": "Skill name, e.g. frontend-design"
+                    }
                 },
                 "required": ["name"],
             },
@@ -72,6 +79,91 @@ TOOL_MAP = {
 }
 
 KEYWORDS = {
-    "list_skills": ["skills", "what can you", "capabilities"],
-    "use_skill": ["use skill", "apply skill", "frontend", "seo", "playwright"],
+    "list_skills": [
+        "skills",
+        "what skills",
+        "available skills",
+        "what can you do",
+        "capabilities",
+        "list skills",
+        "show skills",
+    ],
+    "use_skill": [
+        "use skill",
+        "apply skill",
+        "load skill",
+        "frontend",
+        "seo",
+        "playwright",
+        "use frontend skill",
+    ],
+}
+
+SKILL_META = {
+    "intent_aliases": [
+        "skills",
+        "skill",
+        "capabilities",
+        "claude skills",
+        "jarvis skills",
+    ],
+    "keywords": [
+        "skills",
+        "available skills",
+        "list skills",
+        "show skills",
+        "what skills do you have",
+        "what can you do",
+        "capabilities",
+        "use skill",
+        "apply skill",
+        "load skill",
+    ],
+    "route": "reason",
+    "tools": {
+        "list_skills": {
+            "intent_aliases": [
+                "list skills",
+                "show skills",
+                "available skills",
+                "what skills",
+                "capabilities",
+            ],
+            "keywords": [
+                "list skills",
+                "show skills",
+                "available skills",
+                "what skills do you have",
+                "capabilities",
+            ],
+            "direct_match": [
+                "list skills",
+                "show skills",
+                "available skills",
+                "what skills do you have",
+            ],
+            "route": "reason",
+        },
+        "use_skill": {
+            "intent_aliases": [
+                "use skill",
+                "apply skill",
+                "load skill",
+            ],
+            "keywords": [
+                "use skill",
+                "apply skill",
+                "load skill",
+                "frontend",
+                "seo",
+                "playwright",
+            ],
+            "direct_match": [
+                "use skill",
+                "apply skill",
+                "load skill",
+            ],
+            "route": "reason",
+        },
+    },
 }

@@ -1,19 +1,9 @@
 """
-JARVIS Skill — FLUX image generation (direct, no ComfyUI).
+JARVIS Skill — FLUX image generation via ComfyUI.
 
-Uses Black Forest Labs FLUX model for text-to-image generation.
-Supports Schnell (fast, 4 steps) and Dev (quality, 20 steps).
-
-Workflow:
-  1. Optionally enhance prompt via Ollama
-  2. Unload Ollama from VRAM
-  3. Generate image via FLUX
-  4. Save to vault/Daily/images/
-  5. Reload Ollama
-
-Requirements:
-  pip install flux[all]
-  Model downloads on first use (~6-12GB)
+Uses FLUX model through ComfyUI for text-to-image generation.
+Supports prompt enhancement, Ollama VRAM swap, and image export
+to the vault Daily/images directory.
 """
 
 import json
@@ -24,15 +14,15 @@ from datetime import datetime
 from pathlib import Path
 
 SKILL_NAME = "flux"
-SKILL_DESCRIPTION = "FLUX AI image generation — text to image with prompt enhancement"
+SKILL_DESCRIPTION = "FLUX AI image generation via ComfyUI — text to image with prompt enhancement"
 
 VAULT_DIR = Path("/mnt/d/Jarvis_vault") if os.name != "nt" else Path("D:/Jarvis_vault")
 IMAGES_DIR = VAULT_DIR / "Daily" / "images"
 FLUX_DIR = Path("/mnt/e/coding/flux") if os.name != "nt" else Path("E:/coding/flux")
 OLLAMA_HOST = "http://localhost:11434"
 
-# Config
 CONFIG_FILE = Path(__file__).parent.parent / "config" / "flux.json"
+
 
 def _load_config() -> dict:
     try:
@@ -51,6 +41,7 @@ def _load_config() -> dict:
 def _enhance_prompt(user_prompt: str) -> str:
     """Use Ollama to enhance a rough prompt into a detailed image generation prompt."""
     import urllib.request
+    import re
 
     system = (
         "You are an expert image prompt engineer for FLUX AI image generation. "
@@ -76,11 +67,10 @@ def _enhance_prompt(user_prompt: str) -> str:
         with urllib.request.urlopen(req, timeout=30) as resp:
             data = json.loads(resp.read().decode("utf-8"))
         enhanced = data.get("response", "").strip()
-        # Strip thinking tags
+
         if "<think>" in enhanced:
-            import re
-            enhanced = re.sub(r'<think>.*?</think>', '', enhanced, flags=re.DOTALL).strip()
-        # If still empty after stripping thinking, use original prompt
+            enhanced = re.sub(r"<think>.*?</think>", "", enhanced, flags=re.DOTALL).strip()
+
         return enhanced or user_prompt
     except Exception as e:
         print(f"[FLUX] Prompt enhancement failed: {e}")
@@ -126,7 +116,7 @@ def _restore_big():
 
 
 def _start_comfyui_if_needed():
-    """Start ComfyUI in background. Returns True if ready or starting."""
+    """Start ComfyUI in background. Returns True if ready or already running."""
     import urllib.request as _ur
     try:
         _ur.urlopen("http://localhost:8188/system_stats", timeout=2)
@@ -134,12 +124,12 @@ def _start_comfyui_if_needed():
         return True
     except Exception:
         print("[FLUX] Starting ComfyUI in background...")
-        # Swap to mini model first to free VRAM
         _swap_to_mini()
         subprocess.Popen(
             ["python3", "main.py", "--listen", "0.0.0.0", "--port", "8188"],
             cwd="/mnt/e/coding/ComfyUI",
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
         )
         return False
 
@@ -158,31 +148,28 @@ def _wait_for_comfyui(timeout_secs: int = 60) -> bool:
 
 
 def exec_generate_image(prompt: str, enhance: str = "yes") -> str:
-    """Generate an image using FLUX."""
+    """Generate an image using FLUX through ComfyUI."""
     cfg = _load_config()
     import urllib.request as _ur
+    import random
+    import shutil
 
-    # Step 1: Start ComfyUI IMMEDIATELY (parallel with enhance)
     comfyui_was_running = _start_comfyui_if_needed()
 
-    # Step 2: Enhance prompt (runs while ComfyUI boots)
     if enhance.lower() in ("yes", "true", "1", ""):
-        print(f"[FLUX] Enhancing prompt (ComfyUI loading in parallel)...")
+        print("[FLUX] Enhancing prompt (ComfyUI loading in parallel)...")
         enhanced = _enhance_prompt(prompt)
         print(f"[FLUX] Enhanced: {enhanced[:80]}...")
     else:
         enhanced = prompt
 
-    # Step 3: If ComfyUI wasn't running, swap models now (enhance used big model)
     if not comfyui_was_running:
         _swap_to_mini()
 
-    # Step 4: Wait for ComfyUI to be ready
     if not _wait_for_comfyui(60):
         _restore_big()
         return "ComfyUI failed to start."
 
-    # Step 5: Generate image
     IMAGES_DIR.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
 
@@ -193,70 +180,87 @@ def exec_generate_image(prompt: str, enhance: str = "yes") -> str:
     guidance = cfg.get("guidance", 3.5)
 
     try:
-
-        # Generate via ComfyUI API with fp8 model
         print("[FLUX] Generating via ComfyUI")
-        import random
         seed = random.randint(0, 2**32)
+
         workflow = {
-            # Load FLUX model components separately
-            "1": {"class_type": "CheckpointLoaderSimple", "inputs": {
-                "ckpt_name": "flux1-dev-fp8.safetensors"
-            }},
-            # FLUX uses CLIPTextEncode with conditioning
-            "2": {"class_type": "CLIPTextEncode", "inputs": {
-                "text": enhanced,
-                "clip": ["1", 1]
-            }},
-            # Empty negative for FLUX (cfg=1 means no negative needed)
-            "3": {"class_type": "CLIPTextEncode", "inputs": {
-                "text": "",
-                "clip": ["1", 1]
-            }},
-            # Latent image
-            "4": {"class_type": "EmptyLatentImage", "inputs": {
-                "width": width,
-                "height": height,
-                "batch_size": 1
-            }},
-            # FLUX sampler — use cfg=1 and guidance_scale via FluxGuidance if available
-            "5": {"class_type": "KSampler", "inputs": {
-                "seed": seed,
-                "steps": steps,
-                "cfg": 1.0,
-                "sampler_name": "euler",
-                "scheduler": "simple",
-                "denoise": 1.0,
-                "model": ["1", 0],
-                "positive": ["2", 0],
-                "negative": ["3", 0],
-                "latent_image": ["4", 0]
-            }},
-            # Decode
-            "6": {"class_type": "VAEDecode", "inputs": {
-                "samples": ["5", 0],
-                "vae": ["1", 2]
-            }},
-            # Save
-            "7": {"class_type": "SaveImage", "inputs": {
-                "filename_prefix": f"jarvis_flux_{ts}",
-                "images": ["6", 0]
-            }},
+            "1": {
+                "class_type": "CheckpointLoaderSimple",
+                "inputs": {
+                    "ckpt_name": "flux1-dev-fp8.safetensors"
+                }
+            },
+            "2": {
+                "class_type": "CLIPTextEncode",
+                "inputs": {
+                    "text": enhanced,
+                    "clip": ["1", 1]
+                }
+            },
+            "3": {
+                "class_type": "CLIPTextEncode",
+                "inputs": {
+                    "text": "",
+                    "clip": ["1", 1]
+                }
+            },
+            "4": {
+                "class_type": "EmptyLatentImage",
+                "inputs": {
+                    "width": width,
+                    "height": height,
+                    "batch_size": 1
+                }
+            },
+            "5": {
+                "class_type": "KSampler",
+                "inputs": {
+                    "seed": seed,
+                    "steps": steps,
+                    "cfg": 1.0,
+                    "sampler_name": "euler",
+                    "scheduler": "simple",
+                    "denoise": 1.0,
+                    "model": ["1", 0],
+                    "positive": ["2", 0],
+                    "negative": ["3", 0],
+                    "latent_image": ["4", 0]
+                }
+            },
+            "6": {
+                "class_type": "VAEDecode",
+                "inputs": {
+                    "samples": ["5", 0],
+                    "vae": ["1", 2]
+                }
+            },
+            "7": {
+                "class_type": "SaveImage",
+                "inputs": {
+                    "filename_prefix": f"jarvis_flux_{ts}",
+                    "images": ["6", 0]
+                }
+            },
         }
+
         payload = json.dumps({"prompt": workflow}).encode("utf-8")
-        req = _ur.Request("http://localhost:8188/prompt", data=payload,
-                          headers={"Content-Type": "application/json"})
+        req = _ur.Request(
+            "http://localhost:8188/prompt",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+        )
         resp_data = json.loads(_ur.urlopen(req, timeout=10).read())
         prompt_id = resp_data.get("prompt_id")
 
-        # Poll for completion
-        for _ in range(90):  # 4.5 min
+        for _ in range(90):
             time.sleep(3)
             hist = json.loads(_ur.urlopen(f"http://localhost:8188/history/{prompt_id}", timeout=5).read())
             entry = hist.get(prompt_id, {})
+
             if entry.get("status", {}).get("status_str") == "error":
                 _restore_big()
                 return "ComfyUI generation failed."
+
             outputs = entry.get("outputs", {})
             for nid in outputs:
                 images = outputs[nid].get("images", [])
@@ -265,7 +269,6 @@ def exec_generate_image(prompt: str, enhance: str = "yes") -> str:
                     src = Path(f"/mnt/e/coding/ComfyUI/output/{img['filename']}")
                     dst = IMAGES_DIR / img["filename"]
                     if src.exists():
-                        import shutil
                         shutil.copy2(str(src), str(dst))
                     _restore_big()
                     return f"Image generated: {img['filename']}\nPath: {dst}\nPrompt: {enhanced[:100]}..."
@@ -307,14 +310,12 @@ def exec_flux(action: str, prompt: str = "", enhance: str = "yes") -> str:
         return "Available actions: generate <prompt>, status, recent"
 
 
-# -- Tool definitions --
-
 TOOLS = [
     {
         "type": "function",
         "function": {
             "name": "flux",
-            "description": "Generate images using FLUX AI. 'generate' creates an image from a text prompt (auto-enhanced by Qwen3). 'status' checks FLUX installation. 'recent' lists recent images.",
+            "description": "Generate images using FLUX AI via ComfyUI. 'generate' creates an image from a text prompt (optionally enhanced by Ollama). 'status' checks FLUX installation. 'recent' lists recent images.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -343,7 +344,75 @@ TOOL_MAP = {
 
 KEYWORDS = {
     "flux": [
-        "generate image", "create image", "make image", "draw",
-        "flux", "picture", "photo", "illustration", "render",
+        "generate image",
+        "create image",
+        "make image",
+        "draw",
+        "flux",
+        "picture",
+        "photo",
+        "illustration",
+        "render",
     ],
+}
+
+SKILL_META = {
+    "intent_aliases": [
+        "image generation",
+        "generate image",
+        "create image",
+        "make image",
+        "draw image",
+        "flux",
+        "picture",
+        "illustration",
+        "render",
+    ],
+    "keywords": [
+        "generate image",
+        "create image",
+        "make image",
+        "draw",
+        "draw image",
+        "flux",
+        "picture",
+        "photo",
+        "illustration",
+        "render",
+        "image generator",
+        "text to image",
+    ],
+    "route": "reason",
+    "tools": {
+        "flux": {
+            "intent_aliases": [
+                "generate image",
+                "create image",
+                "make image",
+                "draw image",
+                "flux",
+            ],
+            "keywords": [
+                "generate image",
+                "create image",
+                "make image",
+                "draw",
+                "draw image",
+                "flux",
+                "picture",
+                "photo",
+                "illustration",
+                "render",
+                "text to image",
+            ],
+            "direct_match": [
+                "generate image",
+                "create image",
+                "make image",
+                "draw image",
+                "text to image",
+            ],
+            "route": "reason",
+        }
+    },
 }
