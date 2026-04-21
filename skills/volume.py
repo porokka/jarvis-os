@@ -10,7 +10,7 @@ from typing import Optional
 SKILL_NAME = "volume"
 SKILL_DESCRIPTION = "Windows master volume control (0-100%)"
 SKILL_VERSION = "1.2.0"
-SKILL_AUTHOR = "OpenAI"
+SKILL_AUTHOR = "Sami Porokka"
 SKILL_CATEGORY = "system"
 SKILL_TAGS = ["windows", "volume", "audio", "mute", "sound", "powershell", "memory"]
 SKILL_REQUIREMENTS = ["Windows", "powershell.exe"]

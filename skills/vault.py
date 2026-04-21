@@ -10,7 +10,7 @@ from typing import Optional
 SKILL_NAME = "vault"
 SKILL_DESCRIPTION = "Obsidian vault — read notes, list directories"
 SKILL_VERSION = "1.1.0"
-SKILL_AUTHOR = "OpenAI"
+SKILL_AUTHOR = "Sami Porokka"
 SKILL_CATEGORY = "productivity"
 SKILL_TAGS = ["obsidian", "vault", "notes", "markdown", "files", "read-only"]
 SKILL_REQUIREMENTS = []

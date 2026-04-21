@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Optional, Tuple
 SKILL_NAME = "weather"
 SKILL_DESCRIPTION = "Weather forecast by location — current weather and next days"
 SKILL_VERSION = "1.0.0"
-SKILL_AUTHOR = "OpenAI"
+SKILL_AUTHOR = "Sami Porokka"
 SKILL_CATEGORY = "utility"
 SKILL_TAGS = ["weather", "forecast", "temperature", "rain", "wind", "location"]
 SKILL_REQUIREMENTS = []
@@ -44,7 +44,11 @@ SKILL_META = {
     "network_access": True,
     "entrypoint": "exec_weather",
 }
-
+SKILL_META["response_style"] = {
+    "default": "human_summary",
+    "avoid_raw_dump": True,
+    "round_numbers": True,
+}
 GEOCODE_URL = "https://geocoding-api.open-meteo.com/v1/search"
 FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 
@@ -81,7 +85,7 @@ WEATHER_CODES = {
 
 
 def _truncate(text: str, limit: int = 5000) -> str:
-    text = text.strip()
+    text = text.replace("**", "").strip()
     if len(text) <= limit:
         return text
     return text[:limit].rstrip() + "\n...[truncated]"

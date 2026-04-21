@@ -19,7 +19,7 @@ from xml.etree import ElementTree as ET
 SKILL_NAME = "panasonic_bd"
 SKILL_DESCRIPTION = "Panasonic UB9000 4K Blu-ray — play, pause, stop, status, volume"
 SKILL_VERSION = "1.1.0"
-SKILL_AUTHOR = "OpenAI"
+SKILL_AUTHOR = "Sami Porokka"
 SKILL_CATEGORY = "media"
 SKILL_TAGS = ["panasonic", "blu-ray", "uhd", "upnp", "dlna", "avtransport", "media-control"]
 SKILL_REQUIREMENTS = []

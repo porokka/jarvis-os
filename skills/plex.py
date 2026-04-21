@@ -34,7 +34,7 @@ from xml.etree import ElementTree as ET
 SKILL_NAME = "plex"
 SKILL_DESCRIPTION = "Plex Media Server — browse, scan memory, search, play, and control playback"
 SKILL_VERSION = "1.2.0"
-SKILL_AUTHOR = "OpenAI"
+SKILL_AUTHOR = "Sami Porokka"
 SKILL_CATEGORY = "media"
 SKILL_TAGS = ["plex", "media", "movies", "tv", "streaming", "library", "memory"]
 SKILL_REQUIREMENTS = ["config/plex.json", "Plex token"]

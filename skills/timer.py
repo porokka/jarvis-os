@@ -14,7 +14,7 @@ from typing import Dict, List, Optional
 SKILL_NAME = "timer"
 SKILL_DESCRIPTION = "Countdown timers with voice alerts"
 SKILL_VERSION = "1.1.0"
-SKILL_AUTHOR = "OpenAI"
+SKILL_AUTHOR = "Sami Porokka"
 SKILL_CATEGORY = "productivity"
 SKILL_TAGS = ["timer", "countdown", "tts", "alert", "reminder"]
 SKILL_REQUIREMENTS = []

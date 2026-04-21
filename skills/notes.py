@@ -17,7 +17,7 @@ from typing import Optional, List
 SKILL_NAME = "notes"
 SKILL_DESCRIPTION = "Obsidian notes — create, append, search, daily notes, tags"
 SKILL_VERSION = "1.1.0"
-SKILL_AUTHOR = "OpenAI"
+SKILL_AUTHOR = "Sami Porokka"
 SKILL_CATEGORY = "productivity"
 SKILL_TAGS = ["obsidian", "notes", "vault", "markdown", "journal", "todo"]
 SKILL_REQUIREMENTS = []

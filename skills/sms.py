@@ -22,7 +22,7 @@ from typing import Optional
 SKILL_NAME = "sms"
 SKILL_DESCRIPTION = "SMS — send/receive text messages via Twilio"
 SKILL_VERSION = "1.1.0"
-SKILL_AUTHOR = "OpenAI"
+SKILL_AUTHOR = "Sami Porokka"
 SKILL_CATEGORY = "communication"
 SKILL_TAGS = ["sms", "twilio", "text-message", "messaging", "phone"]
 SKILL_REQUIREMENTS = ["config/twilio.json", "Twilio account", "Twilio phone number"]

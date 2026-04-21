@@ -19,7 +19,7 @@ from typing import Dict, Optional, Tuple
 SKILL_NAME = "radio"
 SKILL_DESCRIPTION = "Internet radio — Finnish stations (Nova, SuomiPop, Rock, YLE) + custom streams"
 SKILL_VERSION = "1.3.0"
-SKILL_AUTHOR = "OpenAI"
+SKILL_AUTHOR = "Sami Porokka"
 SKILL_CATEGORY = "media"
 SKILL_TAGS = ["radio", "streaming", "audio", "internet-radio", "hud", "mpv", "metadata", "memory"]
 SKILL_REQUIREMENTS = []

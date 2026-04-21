@@ -11,7 +11,7 @@ import urllib.request
 SKILL_NAME = "system_control"
 SKILL_DESCRIPTION = "System control — list skills and reload skills"
 SKILL_VERSION = "1.0.0"
-SKILL_AUTHOR = "OpenAI"
+SKILL_AUTHOR = "Sami Porokka"
 SKILL_CATEGORY = "system"
 SKILL_TAGS = ["system", "skills", "reload", "admin"]
 SKILL_REQUIREMENTS = []

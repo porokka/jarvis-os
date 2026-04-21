@@ -22,7 +22,7 @@ from typing import List, Optional
 SKILL_NAME = "shell"
 SKILL_DESCRIPTION = "Shell diagnostics + source code file reading"
 SKILL_VERSION = "1.2.0"
-SKILL_AUTHOR = "OpenAI"
+SKILL_AUTHOR = "Sami Porokka"
 SKILL_CATEGORY = "developer"
 SKILL_TAGS = ["shell", "terminal", "diagnostics", "files", "source-code", "read-only"]
 SKILL_REQUIREMENTS = []

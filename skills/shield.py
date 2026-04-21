@@ -20,7 +20,7 @@ from typing import Dict, Optional
 SKILL_NAME = "shield"
 SKILL_DESCRIPTION = "NVIDIA Shield TV — apps, playback, navigation, HDMI-CEC, per-room control"
 SKILL_VERSION = "1.2.0"
-SKILL_AUTHOR = "OpenAI"
+SKILL_AUTHOR = "Sami Porokka"
 SKILL_CATEGORY = "media"
 SKILL_TAGS = ["shield", "nvidia", "adb", "tv", "android-tv", "denon", "hdmi-cec", "memory"]
 SKILL_REQUIREMENTS = ["adb", "config/rooms.json", "config/shield_apps.json"]

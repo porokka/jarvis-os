@@ -14,6 +14,7 @@ Endpoints:
   GET  /api/network
   GET  /api/self
   GET  /api/runtime-mode
+  GET  /api/reload
 
 Usage:
   python scripts/react_server.py --port 7900
@@ -24,7 +25,6 @@ from __future__ import annotations
 import json
 import os
 import random
-import re
 import subprocess
 import sys
 import threading
@@ -70,6 +70,7 @@ PORT = (
     else int(os.environ.get("JARVIS_PORT", "7900"))
 )
 
+VALID_ROUTES = {"fast", "tools", "reason", "code", "deep"}
 MODE_PROFILE_PATH = PROJECT_ROOT / "config" / "mode_profiles.json"
 
 MAX_ITERATIONS = int(os.environ.get("JARVIS_MAX_ITERATIONS", "8"))
@@ -129,6 +130,12 @@ DEFAULT_MODE_PROFILES: Dict[str, Any] = {
             "tts_engine": "fallback",
             "tts_enabled": False,
         },
+        "reason": {
+            "mode": "analysis",
+            "persona": "jarvis",
+            "tts_engine": "orpheus",
+            "tts_enabled": True,
+        },
     },
     "tool_overrides": [
         {
@@ -153,6 +160,11 @@ Operating mode:
 - If tool results are incomplete, say what is known and what is missing.
 - For engineering tasks, act like an implementation partner: diagnose, modify, verify, and summarize.
 - Keep momentum. Avoid hedging unless uncertainty is real.
+- Respond humanly and be personable and remove unnecessary technical jargon when possible, but be precise and technically rigorous when needed.
+- Remove special characters from tool results that are not relevant to the user-facing answer, such as markdown formatting, unless they are needed for clarity.
+- Call all weekdays with full name, e.g. "Monday", not "Mon" or "Mon.".
+- Make dates and times human-friendly, e.g. "2024-06-01T14:30:00Z" becomes "First of June, 2024 at 2:30 PM UTC".
+
 
 Tool rules:
 - Only call tools that are relevant to the user's current request.
@@ -204,24 +216,10 @@ ACKS = [
 # Skill loading
 # -----------------------------------------------------------------------------
 
-print(f"[REACT] Loading skills from {PROJECT_ROOT / 'skills'}...")
-load_skills()
 
-TOOLS = get_all_tools()
-TOOL_MAP = get_all_tool_map()
-TOOL_KEYWORDS = get_all_keywords()
-TOOL_SKILL_META = get_all_skill_meta()
-TOOLS_BY_NAME = {t["function"]["name"]: t for t in TOOLS}
-
-TOOL_LIST_TEXT = "\n".join(
-    f"- {t['function']['name']}: {t['function'].get('description', '')}" for t in TOOLS
-)
-
-# -----------------------------------------------------------------------------
-# Dynamic discovery maps from skill metadata
-# -----------------------------------------------------------------------------
-
-def build_intent_tool_candidates(tool_skill_meta: Dict[str, Dict[str, Any]]) -> Dict[str, List[str]]:
+def build_intent_tool_candidates(
+    tool_skill_meta: Dict[str, Dict[str, Any]],
+) -> Dict[str, List[str]]:
     out: Dict[str, List[str]] = {}
     for tool_name, meta in tool_skill_meta.items():
         aliases = meta.get("intent_aliases", [])
@@ -266,14 +264,42 @@ def build_tool_route_hints(tool_skill_meta: Dict[str, Dict[str, Any]]) -> Dict[s
     return out
 
 
-INTENT_TOOL_CANDIDATES = build_intent_tool_candidates(TOOL_SKILL_META)
-TOOL_HINTS = build_tool_hints(TOOL_SKILL_META)
-TOOL_DIRECT_MATCH = build_tool_direct_match(TOOL_SKILL_META)
-TOOL_ROUTE_HINTS = build_tool_route_hints(TOOL_SKILL_META)
+def reload_all_skills() -> Dict[str, Any]:
+    global TOOLS, TOOL_MAP, TOOL_KEYWORDS, TOOL_SKILL_META
+    global TOOLS_BY_NAME, TOOL_LIST_TEXT
+    global INTENT_TOOL_CANDIDATES, TOOL_HINTS, TOOL_DIRECT_MATCH, TOOL_ROUTE_HINTS
+
+    load_skills()
+
+    TOOLS = get_all_tools()
+    TOOL_MAP = get_all_tool_map()
+    TOOL_KEYWORDS = get_all_keywords()
+    TOOL_SKILL_META = get_all_skill_meta()
+    TOOLS_BY_NAME = {t["function"]["name"]: t for t in TOOLS}
+
+    TOOL_LIST_TEXT = "\n".join(
+        f"- {t['function']['name']}: {t['function'].get('description', '')}" for t in TOOLS
+    )
+
+    INTENT_TOOL_CANDIDATES = build_intent_tool_candidates(TOOL_SKILL_META)
+    TOOL_HINTS = build_tool_hints(TOOL_SKILL_META)
+    TOOL_DIRECT_MATCH = build_tool_direct_match(TOOL_SKILL_META)
+    TOOL_ROUTE_HINTS = build_tool_route_hints(TOOL_SKILL_META)
+
+    return {
+        "status": "ok",
+        "tool_count": len(TOOLS),
+        "tools": list(TOOL_MAP.keys()),
+    }
+
+
+print(f"[REACT] Loading skills from {PROJECT_ROOT / 'skills'}...")
+reload_all_skills()
 
 # -----------------------------------------------------------------------------
 # Utilities
 # -----------------------------------------------------------------------------
+
 
 def debug(msg: str) -> None:
     if DEBUG:
@@ -408,9 +434,51 @@ def request_ollama_tags() -> Dict[str, Any]:
 def strip_thinking_tags(text: str) -> str:
     if not text:
         return text
-    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
-    text = text.replace("</think>", "")
-    return text.strip()
+
+    start_tag = "<think>"
+    end_tag = "</think>"
+    result: List[str] = []
+    i = 0
+    in_think = False
+
+    while i < len(text):
+        if text.startswith(start_tag, i):
+            in_think = True
+            i += len(start_tag)
+            continue
+        if text.startswith(end_tag, i):
+            in_think = False
+            i += len(end_tag)
+            continue
+        if not in_think:
+            result.append(text[i])
+        i += 1
+
+    return "".join(result).replace(end_tag, "").strip()
+
+
+def parse_json_object_from_text(text: str) -> Optional[Dict[str, Any]]:
+    text = strip_thinking_tags(text or "").strip()
+    if not text:
+        return None
+
+    try:
+        data = json.loads(text)
+        if isinstance(data, dict):
+            return data
+    except Exception:
+        pass
+
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        try:
+            data = json.loads(text[start : end + 1])
+            if isinstance(data, dict):
+                return data
+        except Exception:
+            return None
+    return None
 
 
 def load_mode_profiles() -> Dict[str, Any]:
@@ -539,7 +607,6 @@ def build_self_context(persona: Optional[str] = None) -> Dict[str, Any]:
 
     capabilities = []
     for tool_name, meta in TOOL_SKILL_META.items():
-        tool_desc = ""
         try:
             tool_desc = TOOLS_BY_NAME[tool_name]["function"].get("description", "")
         except Exception:
@@ -665,7 +732,10 @@ def normalize_messages(
     return out
 
 
-def compact_context(messages: List[Dict[str, Any]], max_messages: int = MAX_CONTEXT_MESSAGES) -> List[Dict[str, Any]]:
+def compact_context(
+    messages: List[Dict[str, Any]],
+    max_messages: int = MAX_CONTEXT_MESSAGES,
+) -> List[Dict[str, Any]]:
     systems = [m for m in messages if m.get("role") == "system"]
     others = [m for m in messages if m.get("role") != "system"]
 
@@ -673,7 +743,9 @@ def compact_context(messages: List[Dict[str, Any]], max_messages: int = MAX_CONT
         trimmed = others
     else:
         first_user = next((m for m in others if m.get("role") == "user"), None)
-        tail = others[-(max_messages - (1 if first_user else 0)):]
+        extra = 1 if first_user else 0
+        tail_count = max(0, max_messages - extra)
+        tail = others[-tail_count:] if tail_count > 0 else []
         trimmed = ([first_user] if first_user and first_user not in tail else []) + tail
 
     return systems[:1] + trimmed
@@ -688,9 +760,47 @@ def get_last_user_text(messages: List[Dict[str, Any]]) -> str:
             return safe_json_dumps(content)
     return ""
 
+
+def normalized_route(requested_route: Optional[str], selected_tools: List[Dict[str, Any]]) -> str:
+    if requested_route in VALID_ROUTES:
+        return requested_route
+    return infer_route_from_tools(selected_tools)
+
+
+def call_ollama_once(
+    model: str,
+    messages: List[Dict[str, Any]],
+    route: str,
+    persona: Optional[str] = None,
+    tools: Optional[List[Dict[str, Any]]] = None,
+    stream: bool = False,
+) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {
+        "model": model,
+        "messages": compact_context(
+            normalize_messages(
+                messages,
+                system_prompt=build_system_prompt_for_route(route, persona=persona),
+            )
+        ),
+        "stream": stream,
+    }
+
+    profile_options = get_profile_options(profile_override=persona)
+    if profile_options:
+        payload["options"] = profile_options
+
+    if tools and model not in NO_TOOLS_MODELS:
+        payload["tools"] = tools
+
+    with request_ollama_chat(payload, timeout=CHAT_TIMEOUT_SEC) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
 # -----------------------------------------------------------------------------
 # Tool selection
 # -----------------------------------------------------------------------------
+
 
 def build_planner_catalog() -> List[Dict[str, Any]]:
     catalog: List[Dict[str, Any]] = []
@@ -753,39 +863,17 @@ def build_planner_prompt(user_text: str) -> str:
 
 
 def parse_planner_response(answer: str) -> List[str]:
+    data = parse_json_object_from_text(answer)
+    if data:
+        tools = data.get("tools", [])
+        if isinstance(tools, list):
+            return [item.strip() for item in tools if isinstance(item, str) and item.strip()]
+
     text = strip_thinking_tags(answer or "").strip()
     if not text:
         return []
 
-    try:
-        data = json.loads(text)
-        tools = data.get("tools", [])
-        if isinstance(tools, list):
-            out = []
-            for item in tools:
-                if isinstance(item, str) and item.strip():
-                    out.append(item.strip())
-            return out
-    except Exception:
-        pass
-
-    start = text.find("{")
-    end = text.rfind("}")
-    if start != -1 and end != -1 and end > start:
-        try:
-            data = json.loads(text[start:end + 1])
-            tools = data.get("tools", [])
-            if isinstance(tools, list):
-                out = []
-                for item in tools:
-                    if isinstance(item, str) and item.strip():
-                        out.append(item.strip())
-                return out
-        except Exception:
-            pass
-
-    parts = [p.strip() for p in text.split(",") if p.strip()]
-    return parts
+    return [p.strip() for p in text.split(",") if p.strip()]
 
 
 def dedupe_tools(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -874,8 +962,47 @@ def select_tools_keyword(user_text: str, max_tools: int = MAX_TOOL_SELECTION) ->
     return [TOOLS_BY_NAME[name] for name in top if name in TOOLS_BY_NAME]
 
 
-def select_tools_via_llm(user_text: str) -> List[Dict[str, Any]]:
-    planner_model = get_planner_model()
+def get_effective_planner_model(
+    user_text: str,
+    requested_route: Optional[str],
+    requested_model: Optional[str],
+) -> str:
+    text = (user_text or "").strip().lower()
+    words = len(text.split())
+
+    simple_patterns = [
+        "weather",
+        "forecast",
+        "news",
+        "volume",
+        "timer",
+        "radio",
+        "open",
+        "play",
+        "pause",
+        "stop",
+        "mute",
+        "unmute",
+    ]
+
+    if requested_route == "fast" or words <= 12:
+        if any(p in text for p in simple_patterns):
+            cfg = load_model_config()
+            return str((cfg.get("models") or {}).get("fast", "qwen3:8b"))
+
+    return get_planner_model()
+
+
+def select_tools_via_llm(
+    user_text: str,
+    requested_route: Optional[str] = None,
+    requested_model: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    planner_model = get_effective_planner_model(
+        user_text=user_text,
+        requested_route=requested_route,
+        requested_model=requested_model,
+    )
     prompt = build_planner_prompt(user_text)
 
     payload = {
@@ -883,7 +1010,7 @@ def select_tools_via_llm(user_text: str) -> List[Dict[str, Any]]:
         "messages": [{"role": "user", "content": prompt}],
         "stream": False,
         "options": {
-            "num_predict": 256,
+            "num_predict": 192,
             "temperature": 0,
         },
     }
@@ -904,21 +1031,20 @@ def select_tools_via_llm(user_text: str) -> List[Dict[str, Any]]:
             emit_event("plan", "Planner selected no tools")
             return []
 
-        selected = []
-        seen = set()
+        selected: List[Dict[str, Any]] = []
+        selected_names_seen = set()
 
         for name in selected_names:
             lowered = name.strip().lower()
-            if lowered in seen:
+            if not lowered or lowered in selected_names_seen:
                 continue
-            seen.add(lowered)
+            selected_names_seen.add(lowered)
 
             if lowered in TOOLS_BY_NAME:
                 selected.append(TOOLS_BY_NAME[lowered])
                 continue
 
-            alias_resolved = resolve_intent_or_tool_names([lowered])
-            for tool in alias_resolved:
+            for tool in resolve_intent_or_tool_names([lowered]):
                 try:
                     tool_name = tool["function"]["name"]
                 except Exception:
@@ -942,6 +1068,7 @@ def select_tools_via_llm(user_text: str) -> List[Dict[str, Any]]:
             {
                 "tools": [t["function"]["name"] for t in selected],
                 "raw_answer": answer,
+                "planner_model": planner_model,
             },
         )
         return selected
@@ -974,31 +1101,55 @@ def select_tools_via_llm(user_text: str) -> List[Dict[str, Any]]:
         return select_tools_keyword(user_text)
 
 
-def choose_tools(user_text: str) -> List[Dict[str, Any]]:
+def choose_tools(
+    user_text: str,
+    requested_route: Optional[str] = None,
+    requested_model: Optional[str] = None,
+) -> List[Dict[str, Any]]:
     text = user_text or ""
 
     direct = direct_tools_for_text(text)
     if direct:
         direct = dedupe_tools(direct)[:MAX_TOOL_SELECTION]
-        emit_event("plan", "Direct tool selection from metadata", {"tools": [t["function"]["name"] for t in direct]})
+        emit_event(
+            "plan",
+            "Direct tool selection from metadata",
+            {"tools": [t["function"]["name"] for t in direct]},
+        )
         return direct
 
-    selected = select_tools_via_llm(text)
+    selected = select_tools_via_llm(
+        text,
+        requested_route=requested_route,
+        requested_model=requested_model,
+    )
     if selected:
         selected = dedupe_tools(selected)[:MAX_TOOL_SELECTION]
-        emit_event("plan", "Planner tool selection used", {"tools": [t["function"]["name"] for t in selected]})
+        emit_event(
+            "plan",
+            "Planner tool selection used",
+            {"tools": [t["function"]["name"] for t in selected]},
+        )
         return selected
 
     hinted = select_tools_by_hints(text)
     if hinted:
         hinted = dedupe_tools(hinted)[:MAX_TOOL_SELECTION]
-        emit_event("plan", "Hint-based tool selection used", {"tools": [t["function"]["name"] for t in hinted]})
+        emit_event(
+            "plan",
+            "Hint-based tool selection used",
+            {"tools": [t["function"]["name"] for t in hinted]},
+        )
         return hinted
 
     keyword_tools = select_tools_keyword(text)
     if keyword_tools:
         keyword_tools = dedupe_tools(keyword_tools)[:MAX_TOOL_SELECTION]
-        emit_event("plan", "Keyword tool selection used", {"tools": [t["function"]["name"] for t in keyword_tools]})
+        emit_event(
+            "plan",
+            "Keyword tool selection used",
+            {"tools": [t["function"]["name"] for t in keyword_tools]},
+        )
         return keyword_tools
 
     emit_event("plan", "No tools selected", {"user_text": text[:120]})
@@ -1016,16 +1167,13 @@ def should_select_tools(
     if not text:
         return False
 
-    if len(text.split()) <= 4 and not likely_needs_tools(lower):
+    if len(text.split()) <= 12 and not likely_needs_tools(lower):
         return False
 
     if requested_route == "fast" and not likely_needs_tools(lower):
         return False
 
-    if requested_model and not likely_needs_tools(lower):
-        return False
-
-    return True
+    return likely_needs_tools(lower)
 
 
 def is_simple_direct_chat(
@@ -1033,15 +1181,13 @@ def is_simple_direct_chat(
     selected_tools: List[Dict[str, Any]],
     route: str,
 ) -> bool:
-    if selected_tools:
-        return False
-    if route != "fast":
-        return False
-    return len((user_text or "").split()) <= 12
+    return not selected_tools and route == "fast" and len((user_text or "").split()) <= 12
+
 
 # -----------------------------------------------------------------------------
 # Route inference and tool execution
 # -----------------------------------------------------------------------------
+
 
 def infer_route_from_tools(selected_tools: List[Dict[str, Any]]) -> str:
     if not selected_tools:
@@ -1166,9 +1312,11 @@ class ChatRun:
     def duration_ms(self) -> int:
         return int((time.time() - self.started_at) * 1000)
 
+
 # -----------------------------------------------------------------------------
 # Core chat loop
 # -----------------------------------------------------------------------------
+
 
 def react_chat(
     model: str,
@@ -1310,6 +1458,11 @@ def react_chat(
         )
 
         if not tool_calls:
+            content = data.get("message", {}).get("content", "")
+            if isinstance(content, str):
+                content = content.replace("**", "")
+                data["message"]["content"] = content
+
             append_log(
                 f"[{datetime.now().strftime('%H:%M:%S')}] run={run.request_id} done "
                 f"model={model} route={route} persona={persona} "
@@ -1346,9 +1499,11 @@ def react_chat(
     emit_event("warning", "Max iterations reached", {"request_id": run.request_id, "duration_ms": run.duration_ms()})
     return last_data
 
+
 # -----------------------------------------------------------------------------
 # Streaming support
 # -----------------------------------------------------------------------------
+
 
 def stream_direct_chat(
     handler: "ReactHandler",
@@ -1359,15 +1514,25 @@ def stream_direct_chat(
     persona: Optional[str] = None,
 ) -> None:
     user_text = get_last_user_text(messages)
-    selected_tools = selected_tools if selected_tools is not None else choose_tools(user_text)
+
+    if selected_tools is None:
+        if should_select_tools(user_text, route, model):
+            selected_tools = choose_tools(
+                user_text,
+                requested_route=route,
+                requested_model=model,
+            )
+        else:
+            selected_tools = []
+
     tool_names = [t["function"]["name"] for t in selected_tools]
 
     debug(f"Streaming selected tools: {tool_names}")
-    emit_event("status", "Streaming chat started", {"model": model, "route": route, "persona": persona, "tools": tool_names})
-
-    system_prompt = build_system_prompt_for_route(route, persona=persona)
-    working_messages = normalize_messages(messages, system_prompt=system_prompt)
-    working_messages = compact_context(working_messages)
+    emit_event(
+        "status",
+        "Streaming chat started",
+        {"model": model, "route": route, "persona": persona, "tools": tool_names},
+    )
 
     if selected_tools:
         ack = random.choice(ACKS)
@@ -1385,14 +1550,18 @@ def stream_direct_chat(
                 }
             )
 
-        result = react_chat(model, working_messages, selected_tools, route=route, persona=persona)
-        final_messages = normalize_messages(messages, system_prompt=system_prompt)
-        final_messages.append(result.get("message", {"role": "assistant", "content": ""}))
-        working_messages = compact_context(final_messages)
+        result = react_chat(model, messages, selected_tools, route=route, persona=persona)
+        handler._write_sse_json(result)
+        return
 
     body = {
         "model": model,
-        "messages": working_messages,
+        "messages": compact_context(
+            normalize_messages(
+                messages,
+                system_prompt=build_system_prompt_for_route(route, persona=persona),
+            )
+        ),
         "stream": True,
     }
 
@@ -1421,9 +1590,11 @@ def stream_direct_chat(
             }
         )
 
+
 # -----------------------------------------------------------------------------
 # HTTP handler
 # -----------------------------------------------------------------------------
+
 
 class ReactHandler(BaseHTTPRequestHandler):
     server_version = "JarvisReact/3.0"
@@ -1453,24 +1624,22 @@ class ReactHandler(BaseHTTPRequestHandler):
 
         user_text = get_last_user_text(messages)
 
+        selected_tools: List[Dict[str, Any]] = []
         if should_select_tools(user_text, requested_route, requested_model):
-            selected_tools = choose_tools(user_text)
-        else:
-            selected_tools = []
+            selected_tools = choose_tools(
+                user_text,
+                requested_route=requested_route,
+                requested_model=requested_model,
+            )
 
         tool_names = [t["function"]["name"] for t in selected_tools]
-
-        resolved_route = (
-            requested_route
-            if requested_route in {"fast", "tools", "reason", "code", "deep"}
-            else infer_route_from_tools(selected_tools)
-        )
-
+        resolved_route = normalized_route(requested_route, selected_tools)
         model = resolve_model(requested_model=requested_model, route=resolved_route)
+
         runtime_mode = write_runtime_mode(resolved_route, model, selected_tools)
         persona = runtime_mode.get("persona")
-        debug(f"Runtime mode: {runtime_mode}")
 
+        debug(f"Runtime mode: {runtime_mode}")
         debug(
             f"POST /api/chat "
             f"requested_model={requested_model!r} "
@@ -1507,6 +1676,7 @@ class ReactHandler(BaseHTTPRequestHandler):
             self.send_header("Connection", "keep-alive")
             self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
+
             stream_direct_chat(
                 self,
                 model,
@@ -1518,22 +1688,15 @@ class ReactHandler(BaseHTTPRequestHandler):
             return
 
         if is_simple_direct_chat(user_text, selected_tools, resolved_route):
-            payload = {
-                "model": model,
-                "messages": normalize_messages(
-                    messages,
-                    system_prompt=build_system_prompt_for_route(resolved_route, persona=persona),
-                ),
-                "stream": False,
-            }
-
-            profile_options = get_profile_options(profile_override=persona)
-            if profile_options:
-                payload["options"] = profile_options
-
             try:
-                with request_ollama_chat(payload, timeout=CHAT_TIMEOUT_SEC) as resp:
-                    data = json.loads(resp.read().decode("utf-8"))
+                data = call_ollama_once(
+                    model=model,
+                    messages=messages,
+                    route=resolved_route,
+                    persona=persona,
+                    tools=None,
+                    stream=False,
+                )
                 self._json_response(data)
                 return
             except Exception as e:
@@ -1627,6 +1790,7 @@ class ReactHandler(BaseHTTPRequestHandler):
         if path == "/api/timers":
             try:
                 from skills.timer import get_active_timers  # type: ignore
+
                 self._json_response({"timers": get_active_timers()})
             except ImportError:
                 self._json_response({"timers": []})
@@ -1635,6 +1799,7 @@ class ReactHandler(BaseHTTPRequestHandler):
         if path == "/api/radio":
             try:
                 from skills.radio import get_now_playing, get_radio_state, get_stations  # type: ignore
+
                 self._json_response(
                     {
                         **get_radio_state(),
@@ -1645,32 +1810,19 @@ class ReactHandler(BaseHTTPRequestHandler):
             except ImportError:
                 self._json_response({"playing": False, "stations": {}})
             return
+
         if path == "/api/reload":
-           try:
-               load_skills()
+            try:
+                result = reload_all_skills()
+                self._json_response(result)
+            except Exception as e:
+                self._json_response({"error": str(e)}, code=500)
+            return
 
-               global TOOLS, TOOL_MAP, TOOL_KEYWORDS, TOOL_SKILL_META
-               global TOOLS_BY_NAME
-               global INTENT_TOOL_CANDIDATES, TOOL_HINTS, TOOL_DIRECT_MATCH, TOOL_ROUTE_HINTS
-
-               TOOLS = get_all_tools()
-               TOOL_MAP = get_all_tool_map()
-               TOOL_KEYWORDS = get_all_keywords()
-               TOOL_SKILL_META = get_all_skill_meta()
-               TOOLS_BY_NAME = {t["function"]["name"]: t for t in TOOLS}
-
-               INTENT_TOOL_CANDIDATES = build_intent_tool_candidates(TOOL_SKILL_META)
-               TOOL_HINTS = build_tool_hints(TOOL_SKILL_META)
-               TOOL_DIRECT_MATCH = build_tool_direct_match(TOOL_SKILL_META)
-               TOOL_ROUTE_HINTS = build_tool_route_hints(TOOL_SKILL_META)
-
-               self._json_response({"status": "reloaded", "tool_count": len(TOOLS)})
-           except Exception as e:
-             self._json_response({"error": str(e)}, code=500)
-             return
         if path == "/api/network":
             try:
                 from skills.network import get_topology  # type: ignore
+
                 self._json_response(get_topology())
             except ImportError:
                 self._json_response({"devices": [], "gateway": "192.168.0.1"})
@@ -1680,7 +1832,9 @@ class ReactHandler(BaseHTTPRequestHandler):
             try:
                 runtime_persona = None
                 if RUNTIME_MODE_PATH.exists():
-                    runtime_persona = json.loads(RUNTIME_MODE_PATH.read_text(encoding="utf-8")).get("persona")
+                    runtime_persona = json.loads(
+                        RUNTIME_MODE_PATH.read_text(encoding="utf-8")
+                    ).get("persona")
             except Exception:
                 runtime_persona = None
             self._json_response(build_self_context(persona=runtime_persona))
@@ -1721,6 +1875,7 @@ class ReactHandler(BaseHTTPRequestHandler):
 
     def log_message(self, fmt: str, *args: Any) -> None:
         return
+
 
 # -----------------------------------------------------------------------------
 # Entrypoint

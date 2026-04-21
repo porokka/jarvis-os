@@ -30,7 +30,7 @@ from typing import Optional
 SKILL_NAME = "phone"
 SKILL_DESCRIPTION = "Phone calls via Twilio — make calls, check messages, call log"
 SKILL_VERSION = "1.1.0"
-SKILL_AUTHOR = "OpenAI"
+SKILL_AUTHOR = "Sami Porokka"
 SKILL_CATEGORY = "communication"
 SKILL_TAGS = ["twilio", "phone", "calls", "voicemail", "telephony", "sms"]
 SKILL_REQUIREMENTS = ["twilio account", "twilio phone number", "config/twilio.json"]

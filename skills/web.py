@@ -12,7 +12,7 @@ from urllib.parse import urlparse
 SKILL_NAME = "web"
 SKILL_DESCRIPTION = "Web search via DuckDuckGo + open URLs in browser"
 SKILL_VERSION = "1.1.0"
-SKILL_AUTHOR = "OpenAI"
+SKILL_AUTHOR = "Sami Porokka"
 SKILL_CATEGORY = "utility"
 SKILL_TAGS = ["web", "search", "browser", "duckduckgo", "urls"]
 SKILL_REQUIREMENTS = ["duckduckgo-search or ddgs package for search"]

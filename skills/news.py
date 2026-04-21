@@ -9,17 +9,18 @@ Supports:
 No API key required.
 """
 
+import html
 import re
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
-from typing import Dict, List, Optional
+from typing import Dict, List, Tuple
 
 
 SKILL_NAME = "news"
 SKILL_DESCRIPTION = "News headlines by topic and optional location"
-SKILL_VERSION = "1.0.0"
-SKILL_AUTHOR = "OpenAI"
+SKILL_VERSION = "1.1.0"
+SKILL_AUTHOR = "Sami Porokka"
 SKILL_CATEGORY = "utility"
 SKILL_TAGS = ["news", "headlines", "location", "topic", "rss"]
 SKILL_REQUIREMENTS = []
@@ -41,6 +42,11 @@ SKILL_META = {
     "reads_files": False,
     "network_access": True,
     "entrypoint": "exec_news",
+    "response_style": {
+        "default": "compact_numbered_digest",
+        "avoid_raw_dump": True,
+        "followup_hint": True,
+    },
 }
 
 GOOGLE_NEWS_SEARCH = "https://news.google.com/rss/search"
@@ -63,19 +69,39 @@ LANG_BY_LOCATION = {
 
 
 def _truncate(text: str, limit: int = 5000) -> str:
-    text = text.strip()
+    text = text.replace("**", "").strip()
     if len(text) <= limit:
         return text
     return text[:limit].rstrip() + "\n...[truncated]"
 
 
 def _clean_text(text: str) -> str:
-    text = (text or "").strip()
+    text = html.unescape((text or "").strip())
+    text = re.sub(r"<[^>]+>", " ", text)
     text = re.sub(r"\s+", " ", text)
-    return text
+    return text.strip()
 
 
-def _lang_region(location: str) -> tuple[str, str]:
+def _clean_title(title: str, source: str = "") -> str:
+    title = _clean_text(title)
+
+    # Google titles often end with " - Source"
+    if source:
+        suffix = f" - {source}"
+        if title.endswith(suffix):
+            title = title[: -len(suffix)].strip()
+
+    return title.strip(" -–—")
+
+
+def _shorten(text: str, max_len: int = 140) -> str:
+    text = _clean_text(text)
+    if len(text) <= max_len:
+        return text
+    return text[:max_len].rsplit(" ", 1)[0].rstrip(" ,.-") + "..."
+
+
+def _lang_region(location: str) -> Tuple[str, str]:
     key = (location or "").strip().lower()
     if key in LANG_BY_LOCATION:
         return LANG_BY_LOCATION[key]
@@ -95,51 +121,78 @@ def _rss_fetch(url: str, timeout: int = 12) -> List[Dict[str, str]]:
         xml_data = resp.read().decode("utf-8", errors="replace")
 
     root = ET.fromstring(xml_data)
-    items = []
+    items: List[Dict[str, str]] = []
 
     for item in root.findall(".//item"):
-        title = _clean_text(item.findtext("title", default=""))
+        raw_title = item.findtext("title", default="")
         link = _clean_text(item.findtext("link", default=""))
         pub = _clean_text(item.findtext("pubDate", default=""))
+        desc = _clean_text(item.findtext("description", default=""))
+
         source = ""
         source_el = item.find("source")
         if source_el is not None and source_el.text:
             source = _clean_text(source_el.text)
 
+        title = _clean_title(raw_title, source=source)
+
         if title:
-            items.append({
-                "title": title,
-                "link": link,
-                "pubDate": pub,
-                "source": source,
-            })
+            items.append(
+                {
+                    "title": title,
+                    "link": link,
+                    "pubDate": pub,
+                    "source": source,
+                    "description": desc,
+                }
+            )
 
     return items
 
 
-def _format_items(title: str, items: List[Dict[str, str]], limit: int = 8) -> str:
+def _dedupe_items(items: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    seen = set()
+    out = []
+
+    for item in items:
+        key = (item.get("title", "").lower(), item.get("source", "").lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(item)
+
+    return out
+
+
+def _format_digest(title: str, items: List[Dict[str, str]], limit: int = 6) -> str:
     if not items:
         return f"{title}:\nNo news found."
 
-    lines = [f"{title}:"]
-    for item in items[:limit]:
-        line = f"- {item.get('title', '')}"
-        if item.get("source"):
-            line += f" [{item['source']}]"
-        if item.get("pubDate"):
-            line += f"\n  {item['pubDate']}"
-        if item.get("link"):
-            line += f"\n  {item['link']}"
-        lines.append(line)
+    limit = max(1, min(limit, 10))
+    items = _dedupe_items(items)[:limit]
 
+    lines = [f"{title}:"]
+    lines.append("")
+
+    for idx, item in enumerate(items, start=1):
+        headline = _shorten(item.get("title", ""), 160)
+        source = item.get("source", "").strip()
+
+        if source:
+            lines.append(f"{idx}. {headline} ({source})")
+        else:
+            lines.append(f"{idx}. {headline}")
+
+    lines.append("")
+    lines.append("Say: summarize number 5")
     return "\n".join(lines)
 
 
-def exec_news(action: str, topic: str = "", location: str = "", limit: int = 8) -> str:
+def exec_news(action: str, topic: str = "", location: str = "", limit: int = 6) -> str:
     action = (action or "").strip().lower()
     topic = (topic or "").strip()
     location = (location or "").strip()
-    limit = max(1, min(int(limit), 15))
+    limit = max(1, min(int(limit), 10))
 
     if action not in {"top", "search"}:
         return "Available actions: top, search"
@@ -149,24 +202,28 @@ def exec_news(action: str, topic: str = "", location: str = "", limit: int = 8) 
     try:
         if action == "top":
             if location:
-                query = urllib.parse.urlencode({
-                    "q": location,
+                query = urllib.parse.urlencode(
+                    {
+                        "q": location,
+                        "hl": lang,
+                        "gl": lang.split("-")[-1],
+                        "ceid": ceid,
+                    }
+                )
+                url = f"{GOOGLE_NEWS_SEARCH}?{query}"
+                items = _rss_fetch(url)
+                return _truncate(_format_digest(f"Top news for {location}", items, limit=limit), 5000)
+
+            query = urllib.parse.urlencode(
+                {
                     "hl": lang,
                     "gl": lang.split("-")[-1],
                     "ceid": ceid,
-                })
-                url = f"{GOOGLE_NEWS_SEARCH}?{query}"
-                items = _rss_fetch(url)
-                return _truncate(_format_items(f"Top news for {location}", items, limit=limit), 5000)
-
-            query = urllib.parse.urlencode({
-                "hl": lang,
-                "gl": lang.split("-")[-1],
-                "ceid": ceid,
-            })
+                }
+            )
             url = f"{GOOGLE_NEWS_TOP}?{query}"
             items = _rss_fetch(url)
-            return _truncate(_format_items("Top news", items, limit=limit), 5000)
+            return _truncate(_format_digest("Top news", items, limit=limit), 5000)
 
         if not topic:
             return "Error: topic is required for search."
@@ -175,20 +232,22 @@ def exec_news(action: str, topic: str = "", location: str = "", limit: int = 8) 
         if location:
             query_text = f"{topic} {location}"
 
-        query = urllib.parse.urlencode({
-            "q": query_text,
-            "hl": lang,
-            "gl": lang.split("-")[-1],
-            "ceid": ceid,
-        })
+        query = urllib.parse.urlencode(
+            {
+                "q": query_text,
+                "hl": lang,
+                "gl": lang.split("-")[-1],
+                "ceid": ceid,
+            }
+        )
         url = f"{GOOGLE_NEWS_SEARCH}?{query}"
         items = _rss_fetch(url)
 
-        title = f"News for '{topic}'"
+        title = f"News for {topic}"
         if location:
             title += f" in {location}"
 
-        return _truncate(_format_items(title, items, limit=limit), 5000)
+        return _truncate(_format_digest(title, items, limit=limit), 5000)
 
     except Exception as e:
         return f"News error: {e}"
@@ -218,7 +277,7 @@ TOOLS = [
                     },
                     "limit": {
                         "type": "integer",
-                        "description": "Maximum number of headlines to return. Default 8.",
+                        "description": "Maximum number of headlines to return. Default 6.",
                     },
                 },
                 "required": ["action"],

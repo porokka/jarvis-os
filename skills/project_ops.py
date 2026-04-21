@@ -24,7 +24,7 @@ from typing import Dict, List, Optional, Tuple
 SKILL_NAME = "project_ops"
 SKILL_DESCRIPTION = "Controlled project installs, dependency checks, and remembered per-project access"
 SKILL_VERSION = "1.0.0"
-SKILL_AUTHOR = "OpenAI"
+SKILL_AUTHOR = "Sami Porokka"
 SKILL_CATEGORY = "developer"
 SKILL_TAGS = ["python", "node", "npm", "pip", "dependencies", "install", "permissions"]
 SKILL_REQUIREMENTS = []

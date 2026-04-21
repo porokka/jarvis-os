@@ -24,7 +24,7 @@ from typing import Any, Dict, List, Optional, Tuple
 SKILL_NAME = "memory"
 SKILL_DESCRIPTION = "Persistent memory — preferences, context, episodic logs, semantic recall"
 SKILL_VERSION = "1.1.0"
-SKILL_AUTHOR = "OpenAI"
+SKILL_AUTHOR = "Sami Porokka"
 SKILL_CATEGORY = "core"
 SKILL_TAGS = ["memory", "obsidian", "state", "semantic-recall", "mempalace"]
 SKILL_REQUIREMENTS = []
