@@ -16,5 +16,5 @@ PostgreSQL (Nile.tech), Impala, SQL Server, Redis
 Ollama, Claude Code, LightGBM, XGBoost, Random Forest, LSTM
 
 ## Local AI Models
-- GPU 0 (RTX 3090): qwen3-coder:30b
+- GPU 0 (RTX 3090): qwen3.6:27b
 - GPU 1 (RTX 2080): mistral-nemo

@@ -150,11 +150,11 @@ def _is_qwen_coder(model: str) -> bool:
     Examples:
         qwen3-coder
         qwen2.5-coder:32b
-        qwen2.5-coder:14b
+        qwen3.6:27b  (hybrid — replaced qwen3-coder:30b as the code model)
         qwen-coder
     """
     m = model.lower()
-    return "qwen" in m and "coder" in m
+    return ("qwen" in m and "coder" in m) or m.startswith("qwen3.6")
 
 
 def _error_result(message: str, detail: Any = None) -> Dict[str, Any]:
@@ -216,7 +216,7 @@ def exec_code_edit(
 
         enriched_args = dict(args)
         enriched_args["selected_backend"] = "qwen3_coder"
-        enriched_args["active_model"] = model or "qwen3-coder:30b"
+        enriched_args["active_model"] = model or "qwen3.6:27b"
         return exec_qwen3_code_edit(**enriched_args)
 
     if exec_generic_code_edit is None:

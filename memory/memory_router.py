@@ -54,7 +54,9 @@ FAST_MODEL     = "gemma4:4b"   # label only — llama.cpp serves whatever is loa
 
 QDRANT_HOST  = "127.0.0.1"
 QDRANT_PORT  = 6333
-QDRANT_COLS  = ["jarvis_sessions", "jarvis_memory"]
+# jarvis_lessons: distilled nightly by reflection_daemon.py — retrieved
+# alongside normal memory, ranked by similarity × lesson strength.
+QDRANT_COLS  = ["jarvis_sessions", "jarvis_memory", "jarvis_lessons"]
 OBSIDIAN_DIR = Path("/mnt/d/Jarvis_vault")
 CHAT_LOG_PATH = Path("/mnt/d/Jarvis_vault/chat_log.jsonl")
 TOP_K        = 5
@@ -169,8 +171,8 @@ action       — one of:
                  chat_only     simple answer, no tool, no memory needed
                  direct_tool   call a specific tool immediately
                  planner       multi-step plan needed
+                 deep_agent    research goal needing evidence from 2+ sources/tools
                  code          write or run code
-                 deep_agent    complex autonomous task
 
 IMPORTANT — use action="code" and route="code" when user says:
   - "build X", "create X", "make X", "write X", "code X", "develop X"
@@ -178,6 +180,19 @@ IMPORTANT — use action="code" and route="code" when user says:
   - Any request to generate, write, or produce a file, script, or program
   - "fix X file", "update X.py", "patch X", "edit X code"
   Never use chat_only for requests to BUILD or CREATE software/files.
+
+IMPORTANT — use action="deep_agent" and route="deep" when a good answer
+requires gathering evidence from TWO OR MORE sources or tools first.
+The deep agent plans its own tool calls (web search, market data, news,
+calendars) and synthesises the results. Choose it for:
+  - Forecasts / outlooks: "how do stock markets look next week",
+    "what's the outlook for X", "predict/estimate Y for the coming month"
+  - Comparative research: "compare X and Y", "should I do X or Y",
+    "is now a good time to X" — anything hinging on current facts
+  - Any question you cannot answer well from one tool call or from
+    knowledge alone (needs current data + news + calendar combined)
+  Never answer these with chat_only, and never reduce them to a single
+  direct_tool call — one web search is not research.
 route        — one of:
                  live          chat / immediate answer
                  tools         tool dispatch
@@ -510,11 +525,18 @@ def fetch_qdrant(query: str, top_k: int = TOP_K) -> list[dict]:
                     with_payload=True
                 )
             for h in hits:
+                sim = h.score
+                # Lessons carry a reinforcement score (0.15..2.0) maintained
+                # by the reflection daemon — weight similarity by strength so
+                # a 5×-confirmed lesson outranks a decayed one-off.
+                if col == "jarvis_lessons":
+                    strength = float(h.payload.get("score", 1.0) or 1.0)
+                    sim = sim * (0.6 + 0.2 * min(strength, 2.0))
                 results.append({
-                    "type":   "qdrant",
-                    "score":  round(h.score, 3),
+                    "type":   "lesson" if col == "jarvis_lessons" else "qdrant",
+                    "score":  round(sim, 3),
                     "source": h.payload.get("source", col),
-                    "text":   h.payload.get("text", ""),
+                    "text":   h.payload.get("text", h.payload.get("lesson", "")),
                     "task":   h.payload.get("task", ""),
                     "steps":  h.payload.get("steps", []),
                 })
@@ -689,7 +711,38 @@ def summarize_context(user_input: str, results: list[dict]) -> str:
 # Full pipeline — replaces live_model + old route()
 # ---------------------------------------------------------------------------
 
+def _log_interaction(user_input: str, result: dict) -> None:
+    """Push the exchange to jarvis:log:<date> for the nightly reflection
+    pass (reflection_daemon.py). Never raises."""
+    if not _REDIS_OK or _redis_client is None:
+        return
+    try:
+        from datetime import datetime as _dt
+        now = _dt.now()
+        key = f"jarvis:log:{now.strftime('%Y-%m-%d')}"
+        _redis_client.rpush(key, json.dumps({
+            "ts": now.strftime("%Y-%m-%dT%H:%M:%S"),
+            "kind": "chat",
+            "user": user_input[:300],
+            "action": (
+                f"route={result.get('route')} action={result.get('action')}"
+                + (f" tool={result.get('tool')}" if result.get("tool") else "")
+            ),
+            "outcome": "success",
+            "detail": "",
+        }))
+        _redis_client.expire(key, 7 * 86400)
+    except Exception:
+        pass
+
+
 def route(user_input: str, recent_turns: list[str] | None = None) -> tuple[dict, dict]:
+    result, meta = _route_impl(user_input, recent_turns)
+    _log_interaction(user_input, result)
+    return result, meta
+
+
+def _route_impl(user_input: str, recent_turns: list[str] | None = None) -> tuple[dict, dict]:
     """
     Full pipeline: classify + route + optional memory fetch.
 

@@ -15,7 +15,7 @@ Agentic multi-step coding plan creation and execution with a full staging pipeli
     → display plan for review
     → "proceed PLAN-ID"           queues steps to Redis jarvis:tasks
     → plan_runner executes each step
-        ├── coding steps → qwen3-coder:30b → staging/dev/PLAN-ID/
+        ├── coding steps → qwen3.6:27b → staging/dev/PLAN-ID/
         └── test steps   → Playwright (simple) or Podman (complex)
     → staging/dev/ → staging/tested/
     → human approval → staging/tested/ → staging/approved/

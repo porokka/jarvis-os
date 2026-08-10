@@ -70,7 +70,7 @@ def _enhance_prompt(user_prompt: str) -> str:
     )
 
     payload = json.dumps({
-        "model": "qwen3:30b-a3b",
+        "model": "qwen3.6:27b",
         "prompt": user_prompt,
         "system": system,
         "stream": False,
@@ -122,9 +122,7 @@ def _swap_to_mini():
     print("[FLUX] Swapping to small runtime model...")
 
     for model in [
-        "qwen3:30b-a3b",
-        "gemma4:26b",
-        "qwen3-coder:30b",
+        "qwen3.6:27b",
         "qwen3:14b",
     ]:
         if model != small_model:

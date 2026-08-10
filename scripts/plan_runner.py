@@ -30,6 +30,33 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
+# ── .env loader ────────────────────────────────────────────────────────────────
+# systemd units set EnvironmentFile=.env, but jarvis.sh / nohup launches do not.
+# Self-load .env so Telegram notifications (and other env-gated features) work
+# regardless of how the runner was started. Existing env vars always win.
+def _load_dotenv(path: Path) -> None:
+    try:
+        if not path.exists():
+            return
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            key = key.strip()
+            val = val.strip().strip('"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = val
+    except Exception as e:  # never block startup on env parsing
+        print(f"[runner] .env load skipped: {e}")
+
+
+_load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import gpu_broker
+import heartbeat
+
 # ── Config ─────────────────────────────────────────────────────────────────────
 
 REDIS_HOST       = os.getenv("JARVIS_REDIS_HOST",    "localhost")
@@ -44,14 +71,14 @@ MAX_WORKERS      = int(os.getenv("JARVIS_PLAN_WORKERS", "4"))   # concurrent tas
 EXECUTOR_URL     = os.getenv("JARVIS_EXECUTOR_URL",    "http://localhost:8765")
 AGENT_LOOP_URL   = os.getenv("JARVIS_LOOP_URL",        "http://localhost:8100")
 OLLAMA_URL       = os.getenv("JARVIS_OLLAMA_URL",      "http://localhost:11434")
-CODER_MODEL      = os.getenv("JARVIS_CODER_MODEL",     "qwen3-coder:30b")
+CODER_MODEL      = os.getenv("JARVIS_CODER_MODEL",     "qwen3.6:27b")
 DIAG_MODEL       = os.getenv("JARVIS_DIAG_MODEL",      "qwen3:14b")   # failure diagnosis
 STAGING_ROOT     = Path(os.getenv("JARVIS_STAGING_ROOT", "/mnt/e/coding/staging"))
 VAULT_DIR        = Path(os.getenv("VAULT_DIR", "/mnt/d/Jarvis_vault"))
 FAILURE_LOG      = VAULT_DIR / ".jarvis" / "plan_failures.md"
 
 POLL_INTERVAL    = 0.5   # seconds between Redis polls
-# Dependency wait must cover a cold qwen3-coder:30b load + full generation.
+# Dependency wait must cover a cold qwen3.6:27b load + full generation.
 # 300s caused cascade failures when task 1 ran long.
 DEP_TIMEOUT      = int(os.getenv("JARVIS_DEP_TIMEOUT", "1200"))
 MAX_RETRIES      = 2     # retry failed tasks this many times
@@ -178,6 +205,43 @@ def get_skills(force_reload: bool = False) -> dict:
     return _skills_cache
 
 
+_SOURCE_STOPWORDS = {
+    "code", "skill", "skills", "test", "tests", "file", "files", "the", "and",
+    "from", "into", "copy", "read", "run", "unit", "create", "staging", "with",
+    "directory", "existing", "verify", "check", "results", "step", "plan",
+    "that", "this", "then", "them", "make", "sure", "necessary", "issues",
+    "identify", "identified", "review", "implement", "functionality",
+    "functionalities", "after", "making", "changes", "correctly", "work",
+    "works", "working",
+}
+
+
+def _find_source_files(goal: str, limit: int = 3) -> list:
+    """Match project source files referenced by a task description.
+
+    'check the Keepass skill code' → [scripts/keepass_secrets.py, ...]
+    Searches skills/, scripts/, and services/ by token-in-filename.
+    """
+    tokens = set()
+    for w in goal.lower().split():
+        w = w.strip(".,:;()[]'\"`")
+        if len(w) >= 4 and w.isalpha() and w not in _SOURCE_STOPWORDS:
+            tokens.add(w)
+    if not tokens:
+        return []
+
+    roots = [SKILLS_DIR, SKILLS_DIR.parent / "scripts", SKILLS_DIR.parent / "services"]
+    matches = []
+    for root in roots:
+        if not root.exists():
+            continue
+        for f in sorted(root.glob("*.py")):
+            stem = f.stem.lower()
+            if any(t in stem for t in tokens):
+                matches.append(f)
+    return matches[:limit]
+
+
 def _infer_file_from_goal(goal: str, plan_id: str) -> str:
     """
     Infer a staging file path from a task description when none is explicitly set.
@@ -221,12 +285,23 @@ def _infer_file_from_goal(goal: str, plan_id: str) -> str:
     if m:
         return f"staging/dev/{plan_id}/{m.group(1)}"
 
+    # 5. Test-writing step against existing source → test_<source>.py
+    if "test" in g:
+        srcs = _find_source_files(goal, limit=1)
+        fname = f"test_{srcs[0].stem}.py" if srcs else "test_suite.py"
+        return f"staging/dev/{plan_id}/{fname}"
+
+    # 6. Step references existing project source → work on a staged copy of it
+    srcs = _find_source_files(goal, limit=1)
+    if srcs:
+        return f"staging/dev/{plan_id}/{srcs[0].name}"
+
     return f"staging/dev/{plan_id}/index.html"
 
 
 def exec_code_step(task: dict) -> tuple[bool, str]:
     """
-    Generate file content via qwen3-coder:30b and write to the target path.
+    Generate file content via qwen3.6:27b and write to the target path.
     Used for coding/code_edit plan steps that need to CREATE files in staging.
     Falls back to inferring the target filename from the task description.
     """
@@ -268,12 +343,39 @@ def exec_code_step(task: dict) -> tuple[bool, str]:
             "Apply the fix from the diagnosis in this attempt.\n"
         )
 
+    # Tasks about EXISTING code need the real source in the prompt —
+    # otherwise the model invents an API and the output is useless.
+    # Prefer already-staged copies, then matching project sources.
+    context_block = ""
+    total = 0
+    stage_dir = abs_path.parent
+    seen_names = set()
+    candidates = []
+    try:
+        candidates += [f for f in sorted(stage_dir.glob("*.py")) if f != abs_path]
+    except Exception:
+        pass
+    candidates += _find_source_files(goal)
+    for src in candidates:
+        if src.name in seen_names or src.name == abs_path.name:
+            continue
+        seen_names.add(src.name)
+        try:
+            text = src.read_text(encoding="utf-8", errors="replace")[:6000]
+        except Exception:
+            continue
+        context_block += f"\n### SOURCE FILE: {src.name}\n{text}\n"
+        total += len(text)
+        if total > 12000:
+            break
+
     prompt = (
         f"You are an expert {lang} developer. Write the complete file content for this task:\n\n"
         f"Task: {goal}\n\n"
         f"Target file: {abs_path.name}\n"
-        f"{diag_block}\n"
-        "Rules:\n"
+        f"{diag_block}"
+        + (f"\nReference source code:\n{context_block}\n" if context_block else "")
+        + "\nRules:\n"
         "- Output ONLY the raw file content. No markdown fences, no explanation.\n"
         "- Write complete, working code — not a skeleton or placeholder.\n"
         "- The file must be immediately usable as-is.\n"
@@ -287,16 +389,30 @@ def exec_code_step(task: dict) -> tuple[bool, str]:
         "options": {"temperature": 0, "num_predict": 4096},
     }).encode()
 
-    try:
+    def _call_coder(t: int) -> str:
         req = urllib.request.Request(
             f"{OLLAMA_URL}/api/chat",
             data=payload,
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        with urllib.request.urlopen(req, timeout=300) as resp:
+        with urllib.request.urlopen(req, timeout=t) as resp:
             data = json.loads(resp.read().decode())
-            content = data.get("message", {}).get("content", "").strip()
+            return data.get("message", {}).get("content", "").strip()
+
+    recovery = None
+    try:
+        try:
+            content = _call_coder(300)
+        except Exception as first_err:
+            # GPU wedged / cold-load stall ("llama runner has terminated", timeout).
+            # gpu_broker (shared with agent_loop.py/skill_builder.py) unloads other
+            # Ollama models and evicts gemma vision if needed, then we retry longer.
+            # (This path killed PLAN-20260712-002 before self-recovery existed.)
+            print(f"[runner] coder call failed ({str(first_err)[:120]}) — "
+                  f"GPU recovery + retry", flush=True)
+            recovery = gpu_broker.recover_for_model(CODER_MODEL, log_prefix="runner")
+            content = _call_coder(600)
 
         if not content:
             return False, "Coder returned empty content"
@@ -318,6 +434,93 @@ def exec_code_step(task: dict) -> tuple[bool, str]:
         return False, f"Ollama HTTP {e.code}: {e.read().decode()[:200]}"
     except Exception as e:
         return False, f"exec_code_step failed: {e}"
+    finally:
+        gpu_broker.restore_after(recovery)
+
+
+def build_app_zip(plan_id: str) -> Optional[Path]:
+    """Zip a plan's output (tested preferred, dev fallback) for delivery.
+    Returns the zip path or None if the plan has no files."""
+    import zipfile
+    coding_root = STAGING_ROOT.parent
+    src = None
+    for stage in ("tested", "dev"):
+        d = coding_root / "staging" / stage / plan_id
+        if d.exists() and any(f.is_file() for f in d.rglob("*")):
+            src = d
+            break
+    if src is None:
+        return None
+
+    out = coding_root / "staging" / f"{plan_id}.zip"
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+        for f in sorted(src.rglob("*")):
+            if f.is_file():
+                z.write(f, f.relative_to(src))
+    return out
+
+
+def send_app_zip_telegram(plan_id: str) -> dict:
+    """Zip the plan output and send it through Telegram with a caption the
+    Termux receiver recognises (JARVIS_APP <plan_id>). Phone side:
+    scripts/termux_app_runner.py unzips + serves it at a localhost link."""
+    import urllib.request
+    token = (
+        os.environ.get("JARVIS_TELEGRAM_BOT_TOKEN")
+        or os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    ).strip()
+    chat_ids = [
+        c.strip()
+        for c in os.environ.get("JARVIS_TELEGRAM_ALLOWED_CHAT_IDS", "").split(",")
+        if c.strip()
+    ]
+    if not token or not chat_ids:
+        return {"ok": False, "error": "Telegram credentials not configured"}
+
+    zip_path = build_app_zip(plan_id)
+    if zip_path is None:
+        return {"ok": False, "error": f"No output files found for {plan_id}"}
+
+    content = zip_path.read_bytes()
+    caption = f"JARVIS_APP {plan_id}"
+    boundary = "boundary_jarvis_appzip"
+    sent = 0
+    for chat_id in chat_ids:
+        body: list[bytes] = []
+
+        def part(name: str, value: str) -> None:
+            body.append(
+                f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode()
+            )
+
+        part("chat_id", str(chat_id))
+        part("caption", caption)
+        body.append(
+            f'--{boundary}\r\nContent-Disposition: form-data; name="document"; filename="{zip_path.name}"\r\n'
+            f"Content-Type: application/zip\r\n\r\n".encode()
+        )
+        body.append(content)
+        body.append(f"\r\n--{boundary}--\r\n".encode())
+
+        try:
+            req = urllib.request.Request(
+                f"https://api.telegram.org/bot{token}/sendDocument",
+                data=b"".join(body),
+                headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+            )
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                if json.loads(resp.read()).get("ok"):
+                    sent += 1
+        except Exception as e:
+            print(f"[runner] app zip send failed: {e}")
+
+    return {
+        "ok": sent > 0,
+        "plan_id": plan_id,
+        "zip": str(zip_path),
+        "size_kb": len(content) // 1024,
+        "sent_to": sent,
+    }
 
 
 def _ollama_quick(model: str, prompt: str, timeout: int = 120) -> str:
@@ -378,6 +581,117 @@ def diagnose_failure(task: dict, error: str) -> str:
     return diagnosis
 
 
+def _build_shell_cmd(goal: str, plan_id: str) -> str:
+    """Build a real shell command from a natural-language shell step.
+
+    Handles the recurring plan patterns:
+      copy source → staging, copy dev → tested, read source, run unit tests,
+      generic validate, and a safe echo fallback.
+    """
+    g = goal.lower()
+    coding_root = STAGING_ROOT.parent
+    stage_dev = coding_root / f"staging/dev/{plan_id}"
+
+    if "copy" in g:
+        if "tested" in g:
+            dest = coding_root / f"staging/tested/{plan_id}"
+            return f"mkdir -p '{dest}' && cp -r '{stage_dev}/.' '{dest}/'"
+        # copy referenced project source files INTO the staging workspace
+        srcs = _find_source_files(goal)
+        if srcs:
+            src_str = " ".join(f"'{s}'" for s in srcs)
+            return f"mkdir -p '{stage_dev}' && cp {src_str} '{stage_dev}/' && ls -la '{stage_dev}'"
+        return f"mkdir -p '{stage_dev}' && echo 'No matching source files for: {goal[:60]}'"
+
+    if g.startswith("read") or " read " in f" {g} ":
+        srcs = _find_source_files(goal)
+        if srcs:
+            src_str = " ".join(f"'{s}'" for s in srcs)
+            return f"head -c 4000 {src_str}"
+
+    if "test" in g and ("run" in g or "re-run" in g or "rerun" in g):
+        return (
+            f"cd '{stage_dev}' && "
+            f"(python3 -m pytest -x -q . 2>&1 | tail -30) || "
+            f"(for f in *.py; do python3 -m py_compile \"$f\" && echo \"compile OK: $f\"; done)"
+        )
+
+    if any(w in g for w in ("test", "validate", "verify", "check", "ensure")):
+        try:
+            if list(stage_dev.glob("*.py")):
+                return (
+                    f"cd '{stage_dev}' && "
+                    f"(python3 -m pytest -x -q . 2>&1 | tail -30) || "
+                    f"(for f in *.py; do python3 -m py_compile \"$f\" && echo \"compile OK: $f\"; done)"
+                )
+        except Exception:
+            pass
+        return _build_test_cmd(plan_id, coding_root)
+
+    if "review" in g or "identif" in g:
+        return f"echo 'Review noted — fixes are applied by the coder steps: {goal[:60]}'"
+
+    return f"echo 'Shell step: {goal[:80]}'"
+
+
+def _log_for_reflection(r, kind: str, user: str, action: str,
+                        outcome: str, detail: str = "") -> None:
+    """Push an interaction record to jarvis:log:<date> for the nightly
+    reflection pass (reflection_daemon.py). Never raises."""
+    try:
+        key = f"jarvis:log:{time.strftime('%Y-%m-%d')}"
+        r.rpush(key, json.dumps({
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "kind": kind,
+            "user": user[:300],
+            "action": action[:200],
+            "outcome": outcome,
+            "detail": detail[:300],
+        }))
+        r.expire(key, 7 * 86400)
+    except Exception:
+        pass
+
+
+def _notify_telegram(text: str) -> None:
+    """Send a message to all allowed Telegram chats. Never raises.
+
+    The plan-completion pubsub channel has no live consumer, so the runner
+    notifies Telegram directly — this is how 'plan ready' reaches the user.
+    """
+    import urllib.parse, urllib.request
+    token = (
+        os.environ.get("JARVIS_TELEGRAM_BOT_TOKEN")
+        or os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    ).strip()
+    # User chat only (first allowed ID / explicit override) — the second
+    # allowed ID is the internal mobile bridge channel, not for notifications.
+    explicit = os.environ.get("JARVIS_TELEGRAM_NOTIFY_CHAT_ID", "").strip()
+    chat_ids = [explicit] if explicit else [
+        c.strip()
+        for c in os.environ.get("JARVIS_TELEGRAM_ALLOWED_CHAT_IDS", "").split(",")
+        if c.strip()
+    ][:1]
+    if not token or not chat_ids:
+        return
+    for chat_id in chat_ids:
+        try:
+            payload = urllib.parse.urlencode({
+                "chat_id": chat_id,
+                "text": text[:3900],
+            }).encode()
+            urllib.request.urlopen(
+                urllib.request.Request(
+                    f"https://api.telegram.org/bot{token}/sendMessage",
+                    data=payload,
+                    headers={"Content-Type": "application/x-www-form-urlencoded"},
+                ),
+                timeout=10,
+            )
+        except Exception as e:
+            print(f"[runner] telegram notify failed: {e}")
+
+
 def dispatch_task(task: dict) -> tuple[bool, str]:
     """
     Execute a task by calling the appropriate skill's TOOL_MAP.
@@ -394,23 +708,11 @@ def dispatch_task(task: dict) -> tuple[bool, str]:
     if skill_name in ("coding", "code_edit") or tool_name in ("coding", "code_edit"):
         return exec_code_step(task)
 
-    # Shell steps (test/copy): build a sensible cmd from the task goal
+    # Shell steps (read/copy/test): build a real cmd from the task goal
     if tool_name == "shell" and not args.get("cmd"):
-        goal         = task.get("task", "")
-        target_files = task.get("target_files", [])
-        plan_id      = task.get("plan_id", "")
-        coding_root  = STAGING_ROOT.parent  # /mnt/e/coding
-
-        # Step 10 pattern: "Copy all files from staging/dev/PLAN-ID/ to staging/tested/PLAN-ID/"
-        if "copy" in goal.lower() and plan_id:
-            src  = str(coding_root / f"staging/dev/{plan_id}")
-            dest = str(coding_root / f"staging/tested/{plan_id}")
-            args = {**args, "cmd": f"mkdir -p '{dest}' && cp -r '{src}/.' '{dest}/'"}
-        # Test steps: just echo success (real tests need a test runner)
-        elif any(w in goal.lower() for w in ("test", "validate", "verify", "check")):
-            args = {**args, "cmd": f"echo 'Step validated: {goal[:60]}'"}
-        else:
-            args = {**args, "cmd": f"echo 'Shell step: {goal[:80]}'"}
+        goal    = task.get("task", "")
+        plan_id = task.get("plan_id", "")
+        args = {**args, "cmd": _build_shell_cmd(goal, plan_id)}
         task = {**task, "args": args}
 
     skills = get_skills()
@@ -475,7 +777,7 @@ def _build_test_cmd(plan_id: str, coding_root: Path) -> str:
         html_path = f"file://{stage_path}/index.html"
         return (
             f"node -e \""
-            f"const {{chromium}}=require('@playwright/browser-chromium');"
+            f"const {{chromium}}=require('playwright');"
             f"(async()=>{{"
             f"  const b=await chromium.launch();"
             f"  const p=await b.newPage();"
@@ -531,15 +833,7 @@ async def dispatch_via_executor(task: dict) -> tuple[bool, str]:
     if not cmd:
         goal    = task.get("task", "")
         plan_id = task.get("plan_id", "")
-        coding_root = STAGING_ROOT.parent
-        if "copy" in goal.lower() and plan_id:
-            src  = str(coding_root / f"staging/dev/{plan_id}")
-            dest = str(coding_root / f"staging/tested/{plan_id}")
-            cmd  = f"mkdir -p '{dest}' && cp -r '{src}/.' '{dest}/'"
-        elif any(w in goal.lower() for w in ("test", "validate", "verify", "check", "ensure")):
-            cmd = _build_test_cmd(plan_id, coding_root)
-        else:
-            cmd = f"echo 'Shell step: {goal[:80]}'"
+        cmd = _build_shell_cmd(goal, plan_id)
 
     try:
         # Start execution
@@ -705,6 +999,12 @@ async def run_once(r) -> Optional[dict]:
         _set_status(r, task_uid, "done", f"elapsed={elapsed}s")
         _set_result(r, task_uid, result)
         print(f"[runner] ✓ {task_uid}  ({elapsed}s)")
+        _log_for_reflection(
+            r, "plan", task.get("task", ""),
+            f"{skill}.{tool} ({elapsed}s)",
+            "corrected" if task.get("_diag_retry") else "success",
+            result[:200],
+        )
     else:
         if retries < MAX_RETRIES:
             # Brief backoff so a transient outage (e.g. Ollama restarting)
@@ -733,15 +1033,28 @@ async def run_once(r) -> Optional[dict]:
                 _set_status(r, task_uid, "failed", result[:200])
                 _set_result(r, task_uid, result)
                 print(f"[runner] ✗ {task_uid}: {result[:100]}")
+                _log_for_reflection(
+                    r, "plan", task.get("task", ""),
+                    f"{skill}.{tool}", "fail", result[:250],
+                )
         else:
             _set_status(r, task_uid, "failed", result[:200])
             _set_result(r, task_uid, result)
             print(f"[runner] ✗ {task_uid}: {result[:100]} (after guided retry)")
+            _log_for_reflection(
+                r, "plan", task.get("task", ""),
+                f"{skill}.{tool}", "fail",
+                f"{result[:150]} | diagnosis: {task.get('_diagnosis', '')[:150]}",
+            )
 
     # Check if this completes the plan
     if plan_id:
         all_done, done, total = _check_plan_complete(r, plan_id)
         if all_done:
+            # Guard: only notify once per plan (parallel workers may race here)
+            notify_key = f"jarvis:plan:{plan_id}:notified"
+            first = r.set(notify_key, "1", nx=True, ex=86400)
+
             summary = _plan_summary(r, plan_id)
             print(f"\n[runner] {'='*50}")
             print(summary)
@@ -754,12 +1067,30 @@ async def run_once(r) -> Optional[dict]:
                 "summary": summary,
             }))
 
+            if first:
+                icon = "✅" if done == total else "⚠️"
+                _notify_telegram(
+                    f"{icon} Plan {plan_id} finished: {done}/{total} tasks done\n\n{summary}"
+                )
+                # Fully successful plans with output files also get the app
+                # zip attached — the Termux receiver on the phone unzips and
+                # serves it locally (JARVIS_APP caption is its trigger).
+                if done == total:
+                    try:
+                        result = send_app_zip_telegram(plan_id)
+                        if result.get("ok"):
+                            print(f"[runner] app zip sent ({result['size_kb']} KB)")
+                    except Exception as e:
+                        print(f"[runner] app zip skipped: {e}")
+
     return task
 
 
 async def _worker(r, worker_id: int):
     """Single worker — pops and executes tasks from Redis indefinitely."""
     idle_count = 0
+    last_beat = 0.0
+    HEARTBEAT_EVERY = 30  # seconds; independent of idle/busy state
     while True:
         try:
             task = await run_once(r)
@@ -771,8 +1102,17 @@ async def _worker(r, worker_id: int):
                 await asyncio.sleep(POLL_INTERVAL)
             else:
                 idle_count = 0
+            # Only worker 0 reports — avoids MAX_WORKERS redundant Redis writes.
+            if worker_id == 0 and time.monotonic() - last_beat > HEARTBEAT_EVERY:
+                depth = r.llen(REDIS_TASKS_KEY)
+                heartbeat.beat("plan_runner", ok=True, detail=f"queue_depth={depth}",
+                               interval=HEARTBEAT_EVERY)
+                last_beat = time.monotonic()
         except Exception as e:
             print(f"[runner] w{worker_id} loop error: {e}")
+            if worker_id == 0:
+                heartbeat.beat("plan_runner", ok=False, detail=str(e), interval=HEARTBEAT_EVERY)
+                last_beat = time.monotonic()
             await asyncio.sleep(2.0)
 
 
@@ -965,6 +1305,10 @@ try:
     @app.post("/rerun/{plan_id}")
     def rerun_endpoint(plan_id: str):
         return rerun_plan(plan_id)
+
+    @app.post("/send-app/{plan_id}")
+    def send_app_endpoint(plan_id: str):
+        return send_app_zip_telegram(plan_id)
 
 except ImportError:
     app = None

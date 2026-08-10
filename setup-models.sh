@@ -54,17 +54,17 @@ echo ""
 # Model catalog: name, vram_needed_mb, supports_tools, description
 declare -A CATALOG_VRAM CATALOG_TOOLS CATALOG_DESC
 # Fast models
-CATALOG_VRAM[qwen3:8b]=5000;      CATALOG_TOOLS[qwen3:8b]=yes;  CATALOG_DESC[qwen3:8b]="Fast chat + tools (recommended)"
+CATALOG_VRAM[qwen3:14b]=5000;      CATALOG_TOOLS[qwen3:14b]=yes;  CATALOG_DESC[qwen3:14b]="Fast chat + tools (recommended)"
 CATALOG_VRAM[qwen3:4b]=2500;      CATALOG_TOOLS[qwen3:4b]=yes;  CATALOG_DESC[qwen3:4b]="Ultra-fast, minimal VRAM"
 CATALOG_VRAM[phi4:14b]=9000;      CATALOG_TOOLS[phi4:14b]=no;   CATALOG_DESC[phi4:14b]="Fast chat, no tools"
 CATALOG_VRAM[gemma3:12b]=8000;    CATALOG_TOOLS[gemma3:12b]=yes; CATALOG_DESC[gemma3:12b]="Google, good quality"
 # Medium models
-CATALOG_VRAM[qwen3:30b-a3b]=18000; CATALOG_TOOLS[qwen3:30b-a3b]=yes; CATALOG_DESC[qwen3:30b-a3b]="Best reasoning + tools (recommended)"
+CATALOG_VRAM[qwen3.6:27b]=18000; CATALOG_TOOLS[qwen3.6:27b]=yes; CATALOG_DESC[qwen3.6:27b]="Best reasoning + tools (recommended)"
 CATALOG_VRAM[qwen3:14b]=9000;     CATALOG_TOOLS[qwen3:14b]=yes; CATALOG_DESC[qwen3:14b]="Mid-size reasoning"
 CATALOG_VRAM[mistral-small:24b]=14000; CATALOG_TOOLS[mistral-small:24b]=yes; CATALOG_DESC[mistral-small:24b]="Mistral reasoning"
 # Code models
-CATALOG_VRAM[qwen3-coder:30b]=18000; CATALOG_TOOLS[qwen3-coder:30b]=yes; CATALOG_DESC[qwen3-coder:30b]="Best code model (recommended)"
-CATALOG_VRAM[qwen3-coder:14b]=9000; CATALOG_TOOLS[qwen3-coder:14b]=yes; CATALOG_DESC[qwen3-coder:14b]="Mid-size code"
+CATALOG_VRAM[qwen3.6:27b]=18000; CATALOG_TOOLS[qwen3.6:27b]=yes; CATALOG_DESC[qwen3.6:27b]="Best code model (recommended)"
+CATALOG_VRAM[qwen3.6:27b]=9000; CATALOG_TOOLS[qwen3.6:27b]=yes; CATALOG_DESC[qwen3.6:27b]="Mid-size code"
 CATALOG_VRAM[deepseek-coder-v2:16b]=10000; CATALOG_TOOLS[deepseek-coder-v2:16b]=yes; CATALOG_DESC[deepseek-coder-v2:16b]="DeepSeek code"
 # Deep models
 CATALOG_VRAM[llama3.1:70b]=42000; CATALOG_TOOLS[llama3.1:70b]=yes; CATALOG_DESC[llama3.1:70b]="Largest, needs 2x 3090"
@@ -78,31 +78,31 @@ AUTO_DEEP=""
 
 if [ "$TOTAL_VRAM" -ge 48000 ]; then
   # Dual 3090 or better
-  AUTO_FAST="qwen3:8b"
-  AUTO_REASON="qwen3:30b-a3b"
-  AUTO_CODE="qwen3-coder:30b"
+  AUTO_FAST="qwen3:14b"
+  AUTO_REASON="qwen3.6:27b"
+  AUTO_CODE="qwen3.6:27b"
   AUTO_DEEP="llama3.1:70b"
   TIER="ULTRA (48GB+)"
 elif [ "$TOTAL_VRAM" -ge 24000 ]; then
   # Single 3090 or 4090
-  AUTO_FAST="qwen3:8b"
-  AUTO_REASON="qwen3:30b-a3b"
+  AUTO_FAST="qwen3:14b"
+  AUTO_REASON="qwen3.6:27b"
   AUTO_CODE="gemma4:31b" 
-  AUTO_DEEP="qwen3:30b-a3b"
+  AUTO_DEEP="qwen3.6:27b"
   TIER="HIGH (24GB)"
 elif [ "$TOTAL_VRAM" -ge 16000 ]; then
   # RTX 4080, 3080 Ti, etc.
   AUTO_FAST="qwen3:4b"
   AUTO_REASON="qwen3:14b"
-  AUTO_CODE="qwen3-coder:14b"
+  AUTO_CODE="qwen3.6:27b"
   AUTO_DEEP="qwen3:14b"
   TIER="MEDIUM (16GB)"
 elif [ "$TOTAL_VRAM" -ge 8000 ]; then
   # RTX 3070, 4060, etc.
   AUTO_FAST="qwen3:4b"
-  AUTO_REASON="qwen3:8b"
-  AUTO_CODE="qwen3-coder:14b"
-  AUTO_DEEP="qwen3:8b"
+  AUTO_REASON="qwen3:14b"
+  AUTO_CODE="qwen3.6:27b"
+  AUTO_DEEP="qwen3:14b"
   TIER="STANDARD (8GB)"
 else
   # Low VRAM

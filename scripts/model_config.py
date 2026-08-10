@@ -14,8 +14,8 @@ DEFAULT_MODELS = {
     "fast": "gemma4:e4b",
     "tools": "qwen3:14b",
     "reason": "qwen3:14b",
-    "code": "qwen3-coder:14b",
-    "deep": "qwen3:30b-a3b",
+    "code": "qwen3.6:27b",
+    "deep": "qwen3.6:27b",
 }
 
 DEFAULT_PLANNER_MODEL = "qwen3:14b"

@@ -38,6 +38,25 @@ LLAMA_MODEL="/mnt/e/models/gemma4-e4b/gemma-4-E4B-it-UD-Q4_K_XL.gguf"
 LLAMA_MMPROJ="/mnt/e/models/gemma4-e4b/mmproj-BF16.gguf"
 LLAMA_PORT="8091"
 
+# ── GPU auto-assignment ───────────────────────────────────────────────────────
+# Decide, from live VRAM, which GPU each inference service runs on. Sets:
+#   JARVIS_VISION_GPU_UUID / JARVIS_OLLAMA_GPU_UUID  → CUDA_VISIBLE_DEVICES pins
+#   JARVIS_VISION_STOP  → 0 when vision has its own GPU (broker won't stop it)
+# Pins are UUIDs so they survive CUDA index reshuffles when GPUs change.
+
+assign_gpus() {
+  local shell_out
+  shell_out="$(python3 "$PROJECT_DIR/scripts/gpu_assign.py" --shell 2>/dev/null)"
+  if [ -n "$shell_out" ]; then
+    eval "$shell_out"
+    export JARVIS_VISION_GPU_UUID JARVIS_OLLAMA_GPU_UUID JARVIS_VISION_STOP
+    log "GPU assignment: vision=${JARVIS_VISION_GPU_UUID:-all} ollama=${JARVIS_OLLAMA_GPU_UUID:-all} vision_stop=${JARVIS_VISION_STOP:-1}"
+    python3 "$PROJECT_DIR/scripts/gpu_assign.py" 2>/dev/null | tee -a "$LOG"
+  else
+    log "GPU assignment skipped (gpu_assign.py produced no output; using default GPU selection)"
+  fi
+}
+
 # ── llama-server ──────────────────────────────────────────────────────────────
 
 start_llama_server() {
@@ -45,8 +64,12 @@ start_llama_server() {
     log "llama-server already running on port ${LLAMA_PORT}"
     return
   fi
-  log "Starting llama-server on port ${LLAMA_PORT}..."
-  nohup ${LLAMA_SERVER_CMD} \
+  log "Starting llama-server on port ${LLAMA_PORT} (GPU=${JARVIS_VISION_GPU_UUID:-all})..."
+  # Only pin when we have a UUID. An EMPTY CUDA_VISIBLE_DEVICES means CPU-only, so
+  # when unset we must not export it at all — `env` with no assignment is a no-op.
+  local cuda_pin=()
+  [ -n "${JARVIS_VISION_GPU_UUID:-}" ] && cuda_pin=("CUDA_VISIBLE_DEVICES=${JARVIS_VISION_GPU_UUID}")
+  nohup env "${cuda_pin[@]}" ${LLAMA_SERVER_CMD} \
     --model "${LLAMA_MODEL}" \
     --mmproj "${LLAMA_MMPROJ}" \
     --n-gpu-layers 99 \
@@ -220,8 +243,8 @@ import json, shlex, sys
 from pathlib import Path
 cfg = Path(sys.argv[1])
 defaults = {
-    'fast': 'qwen3:8b', 'tools': 'qwen3:14b', 'reason': 'qwen3:14b',
-    'code': 'qwen3-coder:14b', 'deep': 'qwen3:30b-a3b',
+    'fast': 'qwen3:14b', 'tools': 'qwen3:14b', 'reason': 'qwen3:14b',
+    'code': 'qwen3.6:27b', 'deep': 'qwen3.6:27b',
 }
 try:
     data = json.loads(cfg.read_text(encoding='utf-8'))
@@ -278,8 +301,15 @@ ensure_ollama() {
     log "Ollama already responding on $OLLAMA_HOST"
     return 0
   fi
-  log "Starting Ollama serve with models at $OLLAMA_MODELS"
-  nohup ollama serve > /tmp/ollama.log 2>&1 &
+  log "Starting Ollama serve with models at $OLLAMA_MODELS (GPU=${JARVIS_OLLAMA_GPU_UUID:-all})"
+  # Sane default keep_alive: warm but evictable. A hidden/legacy -1 ("Forever")
+  # pins models and wedges the GPU (agent-loop ollama timeouts, 2026-07-12).
+  export OLLAMA_KEEP_ALIVE="${OLLAMA_KEEP_ALIVE:-30m}"
+  # Pin to the assigned GPU (UUID). Empty CUDA_VISIBLE_DEVICES = CPU-only, so only
+  # export it when we actually have a pin; `env` with no assignment is a no-op.
+  local cuda_pin=()
+  [ -n "${JARVIS_OLLAMA_GPU_UUID:-}" ] && cuda_pin=("CUDA_VISIBLE_DEVICES=${JARVIS_OLLAMA_GPU_UUID}")
+  nohup env "${cuda_pin[@]}" ollama serve > /tmp/ollama.log 2>&1 &
   local pid=$!
   echo "$pid ollama-serve" >> "$PIDFILE"
   for _ in $(seq 1 20); do
@@ -373,7 +403,7 @@ preload_model() {
   local response
   response=$(curl -sS --max-time 240 "$OLLAMA_HOST/api/generate" \
     -H "Content-Type: application/json" \
-    -d "{\"model\":\"$model\",\"prompt\":\"\",\"keep_alive\":-1,\"stream\":false}" \
+    -d "{\"model\":\"$model\",\"prompt\":\"\",\"keep_alive\":\"30m\",\"stream\":false}" \
     2>&1)
   local exit_code=$?
   if [ $exit_code -ne 0 ]; then
@@ -517,6 +547,9 @@ do_start() {
   load_models_from_config
 
   echo "╔══════════════════════════════════════╗"
+  # Decide GPU pins from live VRAM BEFORE any inference service starts.
+  assign_gpus
+
   start_redis                        # ← was never called before
   log "Starting n8n workflow automation"
   n8n_start

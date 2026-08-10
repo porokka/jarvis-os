@@ -7,9 +7,9 @@
 ```
 RTX 3090 (24GB VRAM)          RTX 2080 (8GB VRAM)
 ─────────────────────         ──────────────────────
-qwen3-coder:30b (code)        gemma4:4b (memory router, llama.cpp :8081)
+qwen3.6:27b (code)        gemma4:4b (memory router, llama.cpp :8081)
 qwen3:14b (planner)           Whisper STT (voice transcription)
-qwen3:30b-a3b (reason/deep)   Kokoro TTS (speech synthesis :5100)
+qwen3.6:27b (reason/deep)   Kokoro TTS (speech synthesis :5100)
 Ollama :11434
 FLUX image gen
 ```
@@ -47,7 +47,7 @@ User Input
           │    ├─ route=code   → plan or code     │
           │    ├─ route=tools  → ReAct loop       │
           │    ├─ route=reason → qwen3:14b        │
-          │    └─ route=fast   → qwen3:8b         │
+          │    └─ route=fast   → qwen3:14b         │
           └──────┬──────────────────────────────┘
                  │
      ┌───────────┴────────────────┐
@@ -70,7 +70,7 @@ User Input
                           │  plan_runner.py    │
                           │  (daemon)          │
                           │                   │
-                          │  exec_code_step()  │ qwen3-coder:30b
+                          │  exec_code_step()  │ qwen3.6:27b
                           │    → staging/dev/  │ writes files
                           │                   │
                           │  _build_test_cmd() │
@@ -161,7 +161,7 @@ plan_runner.py (daemon loop)
     │
     ├── skill == coding → exec_code_step()
     │   ├── Build prompt with goal + context
-    │   ├── POST to Ollama qwen3-coder:30b
+    │   ├── POST to Ollama qwen3.6:27b
     │   ├── Strip markdown fences
     │   └── Write to /mnt/e/coding/staging/dev/PLAN-ID/file
     │

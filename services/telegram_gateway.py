@@ -192,7 +192,7 @@ class TelegramGateway:
             "offset": int(state.get("offset", 0)),
             "timeout": timeout,
             "limit": limit,
-            "allowed_updates": json.dumps(["message", "callback_query"]),
+            "allowed_updates": json.dumps(["message", "channel_post", "callback_query"]),
         }
 
         url = self._api_url("getUpdates") + "?" + urllib.parse.urlencode(params)
@@ -321,7 +321,67 @@ class TelegramGateway:
     def is_allowed(self, chat_id: str | int) -> bool:
         if not self.allowed_chat_ids:
             return True
-        return str(chat_id) in self.allowed_chat_ids
+        if str(chat_id) in self.allowed_chat_ids:
+            return True
+        # Users approved through the enrollment flow (telegram_users.py)
+        try:
+            from services import telegram_users
+            return telegram_users.is_approved(chat_id)
+        except Exception:
+            return False
+
+    def _handle_enrollment(self, chat_id, message: Dict[str, Any], text: str, emit_event=None) -> bool:
+        """Self-introduction flow for unknown users. Returns True if handled."""
+        try:
+            from services import telegram_users
+        except Exception:
+            return False
+
+        frm = message.get("from", {}) or {}
+        user_id = str(frm.get("id") or chat_id)
+
+        user = telegram_users.get_user(user_id)
+        if user and user.get("status") == "pending":
+            self.send_message(
+                chat_id,
+                f"Hi {user.get('name', '')} — still waiting for the owner's approval. "
+                "I'll message you as soon as you're in.",
+            )
+            return True
+
+        name = telegram_users.parse_intro(text or "")
+        if not name:
+            return False
+
+        telegram_users.create_pending(user_id, name, frm.get("username", ""))
+        self.send_message(
+            chat_id,
+            f"Nice to meet you, {name}! I've asked the owner to approve your access — "
+            "I'll let you know when you're in.",
+        )
+        for owner_id in telegram_users.owner_chat_ids():
+            try:
+                self.send_message_with_buttons(
+                    owner_id,
+                    (
+                        f"👤 New user request: {name}"
+                        f" (@{frm.get('username', '') or '-'}, id {user_id})\n"
+                        f"Message: {(text or '')[:200]}"
+                    ),
+                    [[
+                        {"text": "✅ Approve", "callback_data": f"usr:approve:{user_id}"},
+                        {"text": "❌ Deny", "callback_data": f"usr:deny:{user_id}"},
+                    ]],
+                )
+            except Exception:
+                pass
+        if emit_event:
+            emit_event(
+                "telegram_enrollment",
+                "New Telegram user pending approval",
+                {"user_id": user_id, "name": name},
+            )
+        return True
     
     def send_audio(self, chat_id: str | int, wav_bytes: bytes, caption: str = "") -> Dict[str, Any]:
         """Send a WAV file as a Telegram audio message (voice note)."""
@@ -349,7 +409,11 @@ class TelegramGateway:
             return json.loads(resp.read().decode("utf-8"))
 
     def _tts_wav(self, text: str, port: int = 5100) -> Optional[bytes]:
-        """Call local Kokoro TTS. Returns WAV bytes or None if unavailable."""
+        """Call local Kokoro TTS. The server returns JSON with base64 PCM chunks —
+        decode them and wrap in a WAV header. Returns WAV bytes or None."""
+        import base64 as _b64
+        import io
+        import wave
         try:
             payload = json.dumps({"text": text, "voice": "af_heart", "speed": 1.0}).encode()
             req = urllib.request.Request(
@@ -358,9 +422,30 @@ class TelegramGateway:
                 headers={"Content-Type": "application/json"},
                 method="POST",
             )
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                return resp.read()
-        except Exception:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                data = json.loads(resp.read())
+
+            if data.get("status") != "ok":
+                print(f"[TELEGRAM] Kokoro error: {data.get('error')}", flush=True)
+                return None
+
+            chunks = data.get("chunks", [])
+            pcm = b"".join(
+                _b64.b64decode(c["audio"]) for c in chunks if c.get("audio")
+            )
+            if not pcm:
+                return None
+
+            sample_rate = int(data.get("sample_rate", 24000))
+            buf = io.BytesIO()
+            with wave.open(buf, "wb") as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(sample_rate)
+                wf.writeframes(pcm)
+            return buf.getvalue()
+        except Exception as e:
+            print(f"[TELEGRAM] TTS failed: {e}", flush=True)
             return None
 
     def _handle_mobile_packet(
@@ -407,14 +492,145 @@ class TelegramGateway:
         if not reply_text:
             return
 
-        # Send structured reply text
-        reply_packet = json.dumps({"type": "reply", "text": reply_text})
-        self.send_message(chat_id, f"JARVIS_REPLY {reply_packet}")
-
-        # Attempt TTS — send audio if Kokoro is running
+        # Generate TTS first so the reply packet can carry an audio flag.
+        # audio=true → mobile shows the text but does NOT speak it (the wav
+        # that follows is the voice). audio=false → mobile speaks the text
+        # itself. This is what prevents every answer speaking twice.
         wav = self._tts_wav(reply_text)
+        reply_packet = json.dumps({
+            "type": "reply",
+            "text": reply_text,
+            "audio": bool(wav),
+        })
+        self.send_message(chat_id, f"JARVIS_REPLY {reply_packet}")
         if wav:
             self.send_audio(chat_id, wav)
+
+    def _describe_image(self, image_b64: str, question: str = "") -> str:
+        """Describe a photo with the llama.cpp vision server (gemma + mmproj).
+        Returns "" when the vision server is unavailable."""
+        llama = os.environ.get("LLAMA_CPP_HOST", "http://127.0.0.1:8091").rstrip("/")
+        focus = f" The user asked: {question}. Focus on what is relevant to that." if question else ""
+        payload = json.dumps({
+            "model": "gemma",
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "image_url",
+                     "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}},
+                    {"type": "text",
+                     "text": f"Describe what you see in this photo, concretely and concisely.{focus}"},
+                ],
+            }],
+            "temperature": 0.2,
+            "stream": False,
+        }).encode("utf-8")
+        try:
+            req = urllib.request.Request(
+                f"{llama}/v1/chat/completions",
+                data=payload,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=90) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            return (data.get("choices") or [{}])[0].get("message", {}).get("content", "").strip()
+        except Exception as e:
+            print(f"[TELEGRAM] vision describe failed: {e}", flush=True)
+            return ""
+
+    def _handle_photo(
+        self,
+        msg: Dict[str, Any],
+        chat_id: str | int,
+        handle_message: Callable[[str, Dict[str, Any]], str],
+        update: Dict[str, Any],
+        emit_event: Optional[Callable] = None,
+    ) -> None:
+        """Incoming photo (mobile camera frame or a photo sent in chat).
+        Vision-describe it, then route question+description through the
+        normal pipeline. Mobile packets get the JARVIS_REPLY audio contract."""
+        photos = msg.get("photo") or []
+        if not photos:
+            return
+        file_id = photos[-1]["file_id"]   # last entry = largest resolution
+        caption = msg.get("caption", "") or ""
+
+        packet = None
+        if caption.startswith("JARVIS_PHOTO "):
+            try:
+                packet = json.loads(caption[len("JARVIS_PHOTO "):])
+            except Exception:
+                packet = None
+
+        user_text = (packet or {}).get("text", "").strip()
+        if not user_text and not caption.startswith("JARVIS_"):
+            user_text = caption.strip()
+        if not user_text:
+            user_text = "What do you see in this image?"
+
+        if emit_event:
+            emit_event("telegram_in", "Photo received",
+                       {"chat_id": chat_id, "text": user_text[:150], "mobile": packet is not None})
+
+        # Download the photo bytes
+        import base64 as _b64
+        try:
+            info_url = self._api_url("getFile") + f"?file_id={file_id}"
+            with urllib.request.urlopen(info_url, timeout=15) as resp:
+                file_path = json.loads(resp.read())["result"]["file_path"]
+            photo_url = f"https://api.telegram.org/file/bot{self.token}/{file_path}"
+            with urllib.request.urlopen(photo_url, timeout=60) as resp:
+                image_b64 = _b64.b64encode(resp.read()).decode()
+        except Exception as e:
+            print(f"[TELEGRAM] photo download failed: {e}", flush=True)
+            return
+
+        # Receipt capture: only attempted when the caption/text signals a
+        # receipt (see looks_like_receipt_request) — everything else falls
+        # through to the existing generic describe+chat behavior unchanged.
+        # Wrapped defensively so any failure here never breaks normal photo
+        # handling.
+        try:
+            from skills.raamat_receipt_capture import try_capture_receipt
+            receipt_reply = try_capture_receipt(image_b64, user_text)
+        except Exception as e:
+            print(f"[TELEGRAM] receipt capture attempt failed: {e}", flush=True)
+            receipt_reply = None
+        if receipt_reply:
+            if emit_event:
+                emit_event("telegram_in", "Receipt captured", {"chat_id": chat_id})
+            if packet is not None:
+                wav = self._tts_wav(receipt_reply)
+                self.send_message(chat_id, "JARVIS_REPLY " + json.dumps({
+                    "type": "reply", "text": receipt_reply, "audio": bool(wav),
+                }))
+                if wav:
+                    self.send_audio(chat_id, wav)
+            else:
+                self.send_message(chat_id, receipt_reply)
+            return
+
+        description = self._describe_image(image_b64, user_text)
+        if not description:
+            self.send_message(chat_id, "I received the photo but the vision server is unavailable right now.")
+            return
+
+        prompt = f"{user_text}\n\n[The user's camera image shows: {description}]"
+        reply_text = handle_message(prompt, update)
+        if not reply_text:
+            return
+
+        if packet is not None:
+            # Mobile contract: audio flag + optional wav (see _handle_mobile_packet)
+            wav = self._tts_wav(reply_text)
+            self.send_message(chat_id, "JARVIS_REPLY " + json.dumps({
+                "type": "reply", "text": reply_text, "audio": bool(wav),
+            }))
+            if wav:
+                self.send_audio(chat_id, wav)
+        else:
+            self.send_message(chat_id, reply_text)
 
     def _handle_mobile_voice(
         self,
@@ -469,12 +685,18 @@ class TelegramGateway:
                 self.send_message(chat_id, "JARVIS_TRANSCRIPT " + json.dumps({"text": transcript}))
                 return
 
-            # Full handling: route through Claude, reply with TTS
+            # Full handling: route through Claude. Same audio-flag contract
+            # as _handle_mobile_packet: wav attached → mobile shows text
+            # silently and plays the wav; no wav → mobile speaks the text.
             reply_text = handle_message(transcript, update)
             if not reply_text:
                 return
-            self.send_message(chat_id, "JARVIS_REPLY " + json.dumps({"type": "reply", "text": reply_text}))
             wav = self._tts_wav(reply_text)
+            self.send_message(chat_id, "JARVIS_REPLY " + json.dumps({
+                "type": "reply",
+                "text": reply_text,
+                "audio": bool(wav),
+            }))
             if wav:
                 self.send_audio(chat_id, wav)
 
@@ -555,6 +777,47 @@ class TelegramGateway:
                                 {"chat_id": chat_id, "data": data},
                             )
 
+                        # Action-queue buttons (apq:approve/confirm/deny <id>)
+                        # resolve directly — they must not go through the LLM
+                        if chat_id and data.startswith("apq:"):
+                            try:
+                                import sys as _sys
+                                _scripts = str(Path(__file__).parent.parent / "scripts")
+                                if _scripts not in _sys.path:
+                                    _sys.path.insert(0, _scripts)
+                                from action_queue import resolve as _apq_resolve
+                                parts = data[4:].split()
+                                verdict = parts[0] if parts else ""
+                                pid = parts[1] if len(parts) > 1 else ""
+                                reply = _apq_resolve(pid, verdict)
+                            except Exception as e:
+                                reply = f"Proposal handling failed: {e}"
+                            if reply:
+                                self.send_message(chat_id, reply)
+                            continue
+
+                        # User enrollment buttons (usr:approve:<id> / usr:deny:<id>)
+                        # resolve directly — they must not go through the LLM
+                        if chat_id and data.startswith("usr:"):
+                            try:
+                                from services import telegram_users
+                                _, verdict, uid = data.split(":", 2)
+                                reply = telegram_users.resolve_pending(uid, verdict)
+                                if verdict == "approve":
+                                    user = telegram_users.get_user(uid)
+                                    self.send_message(
+                                        uid,
+                                        f"Welcome {user.get('name', '') if user else ''}! "
+                                        "You now have access to JARVIS — just talk to me.",
+                                    )
+                                elif verdict == "deny":
+                                    self.send_message(uid, "Access request was declined.")
+                            except Exception as e:
+                                reply = f"User approval handling failed: {e}"
+                            if reply:
+                                self.send_message(chat_id, reply)
+                            continue
+
                         if chat_id and data:
                             reply = handle_message(data, update)
                             if reply:
@@ -562,7 +825,9 @@ class TelegramGateway:
 
                         continue
 
-                    message = update.get("message") or {}
+                    # channel_post: bot-to-bot messaging only works via channels
+                    # (Telegram never delivers group messages between bots)
+                    message = update.get("message") or update.get("channel_post") or {}
                     chat = message.get("chat") or {}
                     chat_id = chat.get("id")
                     text = message.get("text", "")
@@ -578,13 +843,26 @@ class TelegramGateway:
                             self._handle_mobile_voice(voice_obj["file_id"], caption, chat_id, handle_message, update, emit_event)
                         continue
 
+                    # Photos: mobile camera frames (JARVIS_PHOTO caption) or
+                    # photos sent directly in chat — vision-described + routed
+                    if message.get("photo") and not text:
+                        if self.is_allowed(chat_id):
+                            self._handle_photo(message, chat_id, handle_message, update, emit_event)
+                        continue
+
                     if not text:
                         continue
 
                     print(f"[TELEGRAM] chat_id={chat_id} text={text!r}", flush=True)
 
                     if not self.is_allowed(chat_id):
-                        self.send_message(chat_id, "This chat is not allowed to use this JARVIS bot.")
+                        if self._handle_enrollment(chat_id, message, text, emit_event):
+                            continue
+                        self.send_message(
+                            chat_id,
+                            "This chat is not allowed to use this JARVIS bot. "
+                            "If you know the owner, introduce yourself: \"Hi, this is <your name>\".",
+                        )
                         username = message.get("from", {}).get("username", "")
                         first_name = message.get("from", {}).get("first_name", "")
                         alert = (
@@ -631,7 +909,10 @@ class TelegramGateway:
                     lower = reply.lower()
                     plan_match = re.search(r"PLAN_ID:\s*([A-Za-z0-9_-]+)", reply)
 
-                    if plan_match and "waiting_for:" in lower:
+                    # render_plan() ends with "Reply:  proceed | modify | cancel"
+                    # (it never emits "waiting_for:") — match both formats so
+                    # the Proceed/Modify/Cancel buttons actually appear.
+                    if plan_match and ("waiting_for" in lower or "proceed" in lower):
                         plan_id = plan_match.group(1)
 
                         self.send_message_with_buttons(

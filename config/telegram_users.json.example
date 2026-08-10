@@ -1,0 +1,7 @@
+{
+  "REPLACE_WITH_YOUR_TELEGRAM_USER_ID": {
+    "name": "Owner Name",
+    "role": "owner",
+    "status": "approved"
+  }
+}

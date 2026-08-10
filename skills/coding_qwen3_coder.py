@@ -11,7 +11,7 @@ SKILL_VERSION = "1.0.0"
 
 PROJECT_ROOT = Path("/mnt/e/coding/jarvis-os")
 OLLAMA_URL = "http://127.0.0.1:11434/api/chat"
-CODER_MODEL = "qwen3-coder:30b"
+CODER_MODEL = "qwen3.6:27b"
 
 ALLOWED_ROOTS = [
     PROJECT_ROOT,
@@ -150,6 +150,9 @@ def _call_coder(prompt: str, timeout: int = 600) -> str:
     payload = {
         "model": CODER_MODEL,
         "stream": False,
+        # qwen3.6 is a thinking model — a strict patch generator gains
+        # nothing from a reasoning preamble, only latency.
+        "think": False,
         "messages": [
             {
                 "role": "system",

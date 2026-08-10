@@ -3,11 +3,15 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import time
 import traceback
 from pathlib import Path
 from typing import Any
 
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 DEFAULT_VAULT = Path("/mnt/d/Jarvis_vault")
 POLL_SECONDS = 10
@@ -59,7 +63,7 @@ def default_tasks() -> list[dict[str, Any]]:
             "action": "update_aaak_context",
             "args": {
                 "minutes": 15,
-                "model": "qwen3:8b",
+                "model": "qwen3:14b",
             },
             "last_run": 0,
         }
@@ -92,6 +96,27 @@ def save_tasks(tasks: list[dict[str, Any]]) -> None:
     tmp.replace(tasks_path())
 
 
+def merge_run_state(tasks: list[dict[str, Any]]) -> None:
+    """Persist run-state without clobbering tasks the monitor skill added or
+    removed while this tick was executing (both sides do read-modify-write
+    on the same tasks.json)."""
+    current = load_tasks()
+    by_id = {str(t.get("id")): t for t in tasks}
+    changed = False
+
+    for task in current:
+        src = by_id.get(str(task.get("id")))
+        if src is None:
+            continue
+        for field in ("last_run", "last_status", "last_message", "state"):
+            if field in src and task.get(field) != src[field]:
+                task[field] = src[field]
+                changed = True
+
+    if changed:
+        save_tasks(current)
+
+
 def should_run(task: dict[str, Any], ts: float) -> bool:
     if not task.get("enabled", True):
         return False
@@ -109,10 +134,160 @@ def run_update_aaak_context(task: dict[str, Any]) -> str:
 
     args = task.get("args") or {}
     minutes = int(args.get("minutes", 15))
-    model = str(args.get("model", "qwen3:8b"))
+    model = str(args.get("model", "qwen3:14b"))
 
     path = update_aaak_context(minutes=minutes, model=model)
     return f"AAAK context updated: {path}"
+
+
+def _send_telegram(chat_id: str, text: str) -> None:
+    from services.telegram_gateway import TelegramGateway
+
+    TelegramGateway(vault_root()).send_message(chat_id, text)
+
+
+def run_flight_monitor(task: dict[str, Any]) -> str:
+    """Check cheapest fare via Amadeus; alert Telegram when under max_price.
+
+    Re-alerts only when the price drops below the last notified price, so a
+    fare sitting under the threshold doesn't spam every interval.
+    """
+    from skills.amadeus_flights import cheapest_offer
+
+    args = task.get("args") or {}
+    origin = args["origin"]
+    destination = args["destination"]
+    depart_date = args["depart_date"]
+    return_date = args.get("return_date")
+    currency = args.get("currency", "EUR")
+    max_price = float(args.get("max_price", 0))
+
+    offer = cheapest_offer(
+        origin, destination, depart_date,
+        return_date=return_date, currency=currency,
+    )
+    if offer is None:
+        return "no offers found"
+
+    price = float(offer["price"])
+    state = task.setdefault("state", {})
+    state["last_price"] = price
+    state["last_checked"] = time.strftime("%Y-%m-%d %H:%M:%S")
+
+    last_notified = state.get("last_notified_price")
+    if price <= max_price and (last_notified is None or price < float(last_notified)):
+        trip = f"{origin}→{destination} {depart_date}"
+        if return_date:
+            trip += f" (return {return_date})"
+        stops = "direct" if offer.get("stops") == 0 else f"{offer.get('stops')} stop(s)"
+        _notify(
+            args,
+            f"✈️ Fare alert: {trip}",
+            (
+                f"Now {price:.0f} {currency} ({offer.get('carrier', '?')}, {stops}) "
+                f"— your target was {max_price:.0f} {currency}."
+            ),
+        )
+        state["last_notified_price"] = price
+        return f"ALERT sent: {price:.0f} {currency}"
+
+    return f"cheapest {price:.0f} {currency} (target {max_price:.0f})"
+
+
+def _ollama_json(system: str, prompt: str, model: str = "qwen3:14b") -> dict[str, Any]:
+    """Small non-thinking Ollama call that must return a JSON object."""
+    import urllib.request
+
+    host = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+    payload = json.dumps({
+        "model": model,
+        "stream": False,
+        "think": False,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": prompt},
+        ],
+        "options": {"temperature": 0.1, "num_predict": 300},
+    }).encode()
+    req = urllib.request.Request(
+        f"{host}/api/chat", data=payload,
+        headers={"Content-Type": "application/json"}, method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=180) as resp:
+        raw = json.loads(resp.read())["message"]["content"]
+
+    start = raw.index("{")
+    end = raw.rindex("}") + 1
+    return json.loads(raw[start:end])
+
+
+def _notify(args: dict[str, Any], subject: str, body: str) -> str:
+    """Send an alert via telegram (default) or email, per monitor args."""
+    via = str(args.get("notify", "telegram")).lower()
+    if via == "email":
+        from skills.email_skill import _send_email
+
+        to = str(args.get("email_to", "")).strip()
+        if not to:
+            raise ValueError("email notify requested but no email_to set")
+        return _send_email(to, subject, body)
+    _send_telegram(str(args.get("notify_chat_id", "6987301428")), f"{subject}\n{body}")
+    return "telegram sent"
+
+
+def run_condition_monitor(task: dict[str, Any]) -> str:
+    """Universal monitor: web-search a topic, LLM-judge a condition, notify.
+
+    args: watch (search query), condition (natural language), notify
+    ("telegram"|"email"), email_to, cooldown_hours (default 24 — how long
+    to stay quiet after an alert while the condition remains true).
+    """
+    from skills.web import exec_web_search
+
+    args = task.get("args") or {}
+    watch = args["watch"]
+    condition = args["condition"]
+
+    evidence = exec_web_search(watch)
+
+    verdict = _ollama_json(
+        system=(
+            "You judge whether a monitoring condition is met based on web search "
+            "results. Be strict: only report met=true when the evidence clearly "
+            "shows it. Respond ONLY with JSON: "
+            '{"met": true|false, "summary": "<one sentence of the key evidence>"}'
+        ),
+        prompt=(
+            f"Watched topic: {watch}\n"
+            f"Condition to detect: {condition}\n\n"
+            f"Search results:\n{evidence[:6000]}"
+        ),
+        model=str(args.get("model", "qwen3:14b")),
+    )
+
+    met = bool(verdict.get("met"))
+    summary = str(verdict.get("summary", ""))[:500]
+
+    state = task.setdefault("state", {})
+    state["last_checked"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    state["last_met"] = met
+    state["last_summary"] = summary
+
+    if not met:
+        return f"condition not met — {summary or 'no evidence'}"
+
+    cooldown_s = float(args.get("cooldown_hours", 24)) * 3600
+    last_alert = float(state.get("last_alert_ts", 0))
+    if time.time() - last_alert < cooldown_s:
+        return f"condition met, within cooldown — {summary}"
+
+    _notify(
+        args,
+        f"🔔 Monitor triggered: {task.get('id')}",
+        f"Condition: {condition}\n{summary}",
+    )
+    state["last_alert_ts"] = time.time()
+    return f"ALERT sent — {summary}"
 
 
 def run_task(task: dict[str, Any]) -> str:
@@ -120,6 +295,12 @@ def run_task(task: dict[str, Any]) -> str:
 
     if action == "update_aaak_context":
         return run_update_aaak_context(task)
+
+    if action == "flight_monitor":
+        return run_flight_monitor(task)
+
+    if action == "condition_monitor":
+        return run_condition_monitor(task)
 
     raise ValueError(f"Unknown task action: {action}")
 
@@ -168,7 +349,7 @@ def main() -> None:
                 print(f"[TASK_LOOP] error {task_id}: {err}")
 
         if changed:
-            save_tasks(tasks)
+            merge_run_state(tasks)
 
         time.sleep(POLL_SECONDS)
 

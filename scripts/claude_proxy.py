@@ -53,7 +53,7 @@ VOYAGE_URL = "https://api.voyageai.com/v1/embeddings"
 CONFIG_FILE = Path(__file__).resolve().parent.parent / "config" / "cloud_llm.json"
 
 # Fake local model list so /api/tags satisfies readiness checks
-FAKE_TAGS = ["gemma4:e4b", "qwen3:14b", "qwen3-coder:30b", "qwen3:30b-a3b", "nomic-embed-text"]
+FAKE_TAGS = ["gemma4:e4b", "qwen3:14b", "qwen3.6:27b", "qwen3.6:27b", "nomic-embed-text"]
 
 
 def _api_key() -> str:

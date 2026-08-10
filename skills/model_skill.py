@@ -11,8 +11,8 @@ Handles:
   - Upgrade flow: search → pull → validate → ask → remove old
 
 Role taxonomy understood by this skill:
-  planner   — qwen3:14b (fits alongside others), qwen3:30b-a3b
-  coder     — qwen3:32b (solo when active, kicks smaller)
+  planner   — qwen3:14b (fits alongside others), qwen3.6:27b
+  coder     — qwen3.6:27b (solo when active, kicks smaller)
   deep      — qwen3:32b or deepseek-r1 variants (solo)
   embedding — nomic-embed-text or similar small model (always on)
   vision    — gemma3:4b via llama.cpp (multimodal, always on)
@@ -48,7 +48,7 @@ ROLE_VRAM_GB = {
     "embedding": 1,
     "vision":    5,   # gemma3:4b via llama.cpp
     "planner":   9,   # qwen3:14b
-    "planner_big": 20, # qwen3:30b-a3b (MoE, fits in 24GB)
+    "planner_big": 20, # qwen3.6:27b (MoE, fits in 24GB)
     "coder":     20,  # qwen3:32b
     "deep":      20,  # deepseek-r1:32b
 }

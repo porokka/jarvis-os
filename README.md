@@ -20,7 +20,7 @@ Built by [Sami Porokka](https://poro-it.com) / Poro-IT OÜ
 - **Codex UI** — In-browser coding workspace with plan picker, step status, file browser, PTY terminal, and approve button
 - **ReAct Agent Loop** — Think → Tool → Observe → Repeat until task complete (max 8 iterations)
 - **Modular Skills** — 35+ plug-and-play skill modules, enable/disable via config, drop a file in and restart
-- **Multi-Model Routing** — Fast (8b) / Reason (30b) / Code (qwen3-coder:30b) / Deep / Cloud per request
+- **Multi-Model Routing** — Fast (8b) / Reason (30b) / Code (qwen3.6:27b) / Deep / Cloud per request
 - **Voice I/O** — Wake word "Hey JARVIS", Whisper STT, Kokoro/Orpheus TTS with 5.1 center-channel output
 - **Persistent Memory** — MemPalace vector DB + Obsidian vault (2000+ memories), working memory in Redis
 - **Stark Industries HUD** — Next.js holographic dashboard with GPU monitor, lattice face, live system log
@@ -59,7 +59,7 @@ User Input (Voice / HUD / Telegram / API)
           │                    │
     ┌─────▼──────┐     ┌──────▼──────────────┐
     │   Ollama    │     │  plan_runner.py       │
-    │   :11434    │     │  ├ exec_code_step     │  qwen3-coder:30b → writes files
+    │   :11434    │     │  ├ exec_code_step     │  qwen3.6:27b → writes files
     │  qwen3 fam. │     │  ├ Playwright tests   │  simple sites
     └────────────┘     │  ├ Podman tests       │  complex projects
                        │  └ staging pipeline    │  dev → tested → approved
@@ -150,7 +150,7 @@ User: "build a lottery website with 7x7 grid"
    queue_plan_to_redis()  → jarvis:tasks Redis list
           │
    plan_runner.py consumes tasks:
-     Step 1-6:  exec_code_step() → qwen3-coder:30b → writes to staging/dev/
+     Step 1-6:  exec_code_step() → qwen3.6:27b → writes to staging/dev/
      Step 7-8:  _build_test_cmd() → Playwright (simple) or Podman (complex)
      Step 9:    exec_code_step() → adds features
      Step 10:   cp staging/dev/ → staging/tested/
@@ -176,7 +176,7 @@ JARVIS uses a modular skill system. Each skill is a self-contained Python module
 
 | Skill | Key Tools | Description |
 |-------|-----------|-------------|
-| **coding** | `coding`, `code_edit` | Code generation via qwen3-coder:30b — plans, diffs, file writes |
+| **coding** | `coding`, `code_edit` | Code generation via qwen3.6:27b — plans, diffs, file writes |
 | **plan** | `plan_create`, `plan_proceed` | Agentic multi-step plan creation and execution |
 | **n8n** | `n8n` | n8n workflow control — trigger webhooks, list executions, add tasks |
 | **shell** | `shell_command`, `read_file` | Safe shell execution + file reading |
@@ -225,10 +225,10 @@ JARVIS uses a modular skill system. Each skill is a self-contained Python module
 | Slot | Model | Size | Use Case |
 |------|-------|------|----------|
 | Router | gemma4:4b | 2.5 GB | Memory routing (llama.cpp :8081) |
-| Fast | qwen3:8b | 5 GB | Casual chat, quick answers |
+| Fast | qwen3:14b | 5 GB | Casual chat, quick answers |
 | Reason | qwen3:14b | 9 GB | Planning, analysis, tool use |
-| Code | qwen3-coder:30b | 18 GB | Code generation, file writing |
-| Deep | qwen3:30b-a3b | 18 GB | Strategy, deep analysis |
+| Code | qwen3.6:27b | 18 GB | Code generation, file writing |
+| Deep | qwen3.6:27b | 18 GB | Strategy, deep analysis |
 | Cloud | Claude Sonnet | API | Complex code, multi-step tasks |
 
 ---
@@ -424,7 +424,7 @@ jarvis-os/
 ├── skills/                    # Modular skill modules (35+)
 │   ├── loader.py              # Dynamic discovery + import
 │   ├── coding.py              # Code generation
-│   ├── coding_qwen3_coder.py  # qwen3-coder:30b executor
+│   ├── coding_qwen3_coder.py  # qwen3.6:27b executor
 │   ├── plan.py                # Plan create/proceed/cancel
 │   ├── n8n.py                 # n8n workflow integration
 │   ├── shell.py               # Shell + file reading

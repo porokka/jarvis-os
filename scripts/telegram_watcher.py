@@ -23,15 +23,30 @@ VAULT_DIR = Path(
 REACT_SERVER = os.environ.get("JARVIS_REACT_SERVER", "http://127.0.0.1:7900")
 
 
-def call_jarvis_chat(text: str) -> str:
+def _identity_context(update: dict | None) -> str:
+    """System line telling JARVIS who is talking (from telegram_users registry)."""
+    try:
+        from services import telegram_users
+        message = (update or {}).get("message") or (update or {}).get("channel_post") or {}
+        frm = message.get("from", {}) or {}
+        user_id = frm.get("id")
+        if user_id is None:
+            return ""
+        return telegram_users.identity_context(user_id, frm.get("first_name", ""))
+    except Exception:
+        return ""
+
+
+def call_jarvis_chat(text: str, update: dict | None = None) -> str:
+    messages = []
+    identity = _identity_context(update)
+    if identity:
+        messages.append({"role": "system", "content": identity})
+    messages.append({"role": "user", "content": text})
+
     payload = {
         "source": "telegram",
-        "messages": [
-            {
-                "role": "user",
-                "content": text,
-            }
-        ],
+        "messages": messages,
         "stream": False,
     }
 
@@ -53,8 +68,7 @@ def emit_event(event_type: str, message: str, data: dict | None = None) -> None:
 
 
 def handle_message(text: str, update: dict) -> str:
-    # Optional: make Telegram explicit to JARVIS.
-    return call_jarvis_chat(f"{text}")
+    return call_jarvis_chat(text, update)
 
 
 if __name__ == "__main__":

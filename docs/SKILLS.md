@@ -188,7 +188,7 @@ Skills not listed default to **enabled**.
 | Skill | File | Key Tools | Description |
 |-------|------|-----------|-------------|
 | **coding** | `coding.py` | `coding` | Code generation and editing — diff/patch format |
-| **coding_qwen3_coder** | `coding_qwen3_coder.py` | `code_edit` | qwen3-coder:30b direct executor for plan_runner |
+| **coding_qwen3_coder** | `coding_qwen3_coder.py` | `code_edit` | qwen3.6:27b direct executor for plan_runner |
 | **plan** | `plan.py` | `plan_create` `plan_proceed` `plan_cancel` | Agentic multi-step plan system with staging pipeline |
 | **shell** | `shell.py` | `shell_command` `read_file` | Safe shell execution + file reading in WSL |
 | **git** | `git.py` | `git` | Git — status, diff, commit, push, pull, branch, PR |
@@ -213,6 +213,8 @@ Skills not listed default to **enabled**.
 | **news** | `news.py` | `get_news` | Live news headlines via RSS / newsapi |
 | **weather** | `weather.py` | `weather` | Current weather and multi-day forecasts |
 | **flux** | `flux.py` | `flux` | FLUX text-to-image generation with Qwen3 prompt enhancement |
+| **flights** | `amadeus_flights.py` | `flight_search` | Flight prices via Amadeus API (see [monitor.md](skills/monitor.md)) |
+| **monitor** | `monitor_skill.py` | `monitor_flights` `monitor_condition` `monitor_list` `monitor_remove` | Background watches run by task_loop — flight fares or any web-observable condition, alerts via Telegram/email ([docs](skills/monitor.md)) |
 
 ### Memory & Knowledge
 

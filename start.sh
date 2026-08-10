@@ -19,7 +19,7 @@ ollama run mistral-nemo --keepalive 24h &
 MISTRAL_PID=$!
 
 log "Starting Ollama — Qwen3-Coder on RTX 3090..."
-ollama run qwen3-coder:30b --keepalive 24h &
+ollama run qwen3.6:27b --keepalive 24h &
 QWEN_PID=$!
 
 sleep 3

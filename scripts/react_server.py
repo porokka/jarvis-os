@@ -92,6 +92,11 @@ OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
 KOKORO_HOST = os.environ.get("KOKORO_HOST", "http://127.0.0.1:5100")
 KOKORO_TIMEOUT_SEC = int(os.environ.get("KOKORO_TIMEOUT_SEC", "5"))
 KOKORO_VOICE = os.environ.get("KOKORO_VOICE", "bm_george")
+# Chatterbox handles non-English TTS (Kokoro is effectively English-only).
+# TTS_LANGUAGE != "en" routes speak_via_kokoro to Chatterbox instead.
+CHATTERBOX_HOST = os.environ.get("CHATTERBOX_HOST", "http://127.0.0.1:5200")
+CHATTERBOX_TIMEOUT_SEC = int(os.environ.get("CHATTERBOX_TIMEOUT_SEC", "60"))
+TTS_LANGUAGE = os.environ.get("TTS_LANGUAGE", "en").strip().lower()
 PORT = (
     int(sys.argv[sys.argv.index("--port") + 1])
     if "--port" in sys.argv
@@ -562,15 +567,19 @@ async def speak_via_kokoro(
     
     safe_voice = voice if voice.startswith(("af_", "am_", "bf_", "bm_")) else KOKORO_VOICE
     play=False
-    payload = {
-        "text": text,
-        "voice": safe_voice,
-        "play": play,
-    }
+
+    # Non-English → Chatterbox (Kokoro voices above are English-only)
+    use_chatterbox = TTS_LANGUAGE != "en"
+    if use_chatterbox:
+        host, timeout = CHATTERBOX_HOST, CHATTERBOX_TIMEOUT_SEC
+        payload = {"text": text, "language": TTS_LANGUAGE}
+    else:
+        host, timeout = KOKORO_HOST, KOKORO_TIMEOUT_SEC
+        payload = {"text": text, "voice": safe_voice, "play": play}
 
     try:
         req = urllib.request.Request(
-            f"{KOKORO_HOST}/tts/speak",
+            f"{host}/tts/speak",
             data=json.dumps(payload).encode("utf-8"),
             headers={"Content-Type": "application/json"},
             method="POST",
@@ -583,7 +592,7 @@ async def speak_via_kokoro(
             lambda: json.loads(
                 urllib.request.urlopen(
                     req,
-                    timeout=KOKORO_TIMEOUT_SEC,
+                    timeout=timeout,
                 ).read().decode("utf-8")
             ),
         )
@@ -1826,6 +1835,19 @@ def handle_live_router(
     # --- chat_only fast return ---
     # Don't intercept if the caller explicitly set a non-live route
     _explicit_route_set = requested_route and requested_route not in ("live", None)
+
+    # Research-shaped questions must reach the deep agent loop — a confident
+    # inline chat_only answer or a single direct_tool call (one web search)
+    # is not research. Mirrors detect_route's deep keyword fallback.
+    if (
+        not _explicit_route_set
+        and live_action in ("chat_only", "direct_tool")
+        and is_research_shaped(user_text)
+    ):
+        live_action = "deep_agent"
+        live_result["action"] = "deep_agent"
+        live_result["route"] = "deep"
+
     if live_action == "chat_only" and not _explicit_route_set and (chat_confidence >= 0.70 or escalation_confidence == 0.0) and live_speak:
         self._json_response({
             "model":      "memory_router",
@@ -2002,9 +2024,19 @@ def handle_full_pipeline(
     if is_code_request:
         requested_route = "code"
 
-    # --- fuzzy skill match (skip for code) ---
+    # --- fuzzy skill match (skip for code, EXCEPT an explicit skill_builder match)
+    # A "create/build a skill" request isn't a file-edit task — letting an
+    # upstream is_code_request/route=="code" classification swallow it sends it
+    # into the generic HTML/CSS-oriented code-planning template instead of
+    # skill_builder's own autobuild pipeline. That's exactly what happened to
+    # PLAN-20260712-002 (the user asked to use "skill creation skill", but
+    # "modify" + a coding-flavored request forced route="code" first, so this
+    # fuzzy match never even ran). Still require the same >=0.88 confidence
+    # gate below — this only ever overrides "code" for skill_builder specifically.
     if requested_route == "code":
-        direct_skill_match = None
+        direct_skill_match = resolve_skill_command(user_text)
+        if not (direct_skill_match and direct_skill_match.get("tool_name") == "skill_builder"):
+            direct_skill_match = None
     else:
         direct_skill_match = resolve_skill_command(user_text)
         if direct_skill_match and direct_skill_match.get("score", 0) >= 0.88:
@@ -2124,7 +2156,12 @@ def handle_full_pipeline(
 
     resolved_route = normalized_route(requested_route, selected_tools)
 
-    if is_code_request or (plan_decision and plan_decision.get("execution_confidence", 0) >= 0.85):
+    # Don't let is_code_request re-force "code" over a confirmed skill_builder
+    # match (see the fuzzy-skill-match block above) — otherwise this line
+    # silently undoes that override and the bug it fixes recurs.
+    _skill_builder_matched = bool(direct_skill_match) and direct_skill_match.get("tool_name") == "skill_builder"
+    if (is_code_request or (plan_decision and plan_decision.get("execution_confidence", 0) >= 0.85)) \
+            and not _skill_builder_matched:
         resolved_route = "code"
 
     if resolved_route == "code":
@@ -2207,7 +2244,11 @@ def handle_full_pipeline(
         return
 
     # --- code route ---
-    if resolved_route == "code" and is_coder_model(model):
+    # Route-based, not is_coder_model(model): the code route already forced
+    # the configured code model above, and that model no longer has "coder"
+    # in its name (qwen3.6:27b). is_coder_model stays name-based elsewhere —
+    # it marks models that can't take native Ollama tools (qwen3-coder line).
+    if resolved_route == "code":
         coder_tool = get_coder_tool()
         if coder_tool:
             selected_tools = [coder_tool]
@@ -4641,7 +4682,7 @@ def get_effective_planner_model(user_text: str, requested_route: Optional[str], 
     if requested_route == "fast" or words <= 12:
         if any(p in text for p in simple_patterns):
             cfg = load_model_config()
-            return str((cfg.get("models") or {}).get("fast", "qwen3:8b"))
+            return str((cfg.get("models") or {}).get("fast", "qwen3:14b"))
     return get_planner_model()
 
 def get_active_task(task_graph_path: Path) -> Optional[dict]:
@@ -4808,7 +4849,25 @@ def detect_route(message: str, source: str = "") -> str:
     ]
     if any(k in text for k in code_keywords):
         return "code"
+    if is_research_shaped(text):
+        return "deep"
     return "reason"
+
+
+# Research-shaped goals: answering well needs evidence from several
+# sources (web + market data + news/calendar), so they belong in the
+# deep agent loop, not a single-tool pass or an inline chat answer.
+DEEP_KEYWORDS = [
+    "forecast", "outlook", "predict", "next week", "coming week",
+    "next month", "coming month", "research", "compare", "deep dive",
+    "analysis", "analyse", "analyze", "should i buy", "should i sell",
+    "good time to", "market look", "markets look",
+]
+
+
+def is_research_shaped(message: str) -> bool:
+    text = (message or "").lower()
+    return any(k in text for k in DEEP_KEYWORDS)
 
 
 def infer_route_from_tools(selected_tools: List[Dict[str, Any]]) -> str:
@@ -5265,7 +5324,7 @@ class ReactHandler(BaseHTTPRequestHandler):
             task_text   = body.get("task") or body.get("goal") or body.get("description", "")
 
             # Log to events file
-            log_event(event_type, message or task_text, data={
+            emit_event(event_type, message or task_text, data={
                 "source": source, **data,
                 **({"task": task_text} if task_text else {}),
             })
@@ -5893,6 +5952,20 @@ if __name__ == "__main__":
 
     server = ThreadingHTTPServer(("127.0.0.1", PORT), ReactHandler)
     print(f"[REACT] ReAct server v3 on http://127.0.0.1:{PORT}")
+
+    # Optional extra bind for container access (e.g. n8n → POST /api/events).
+    # Set JARVIS_BIND_EXTRA to the podman bridge gateway (e.g. 10.89.0.1) so
+    # containers on jarvis-net can reach the API. This interface is NOT
+    # LAN-routable, so it does not expose the API beyond the podman bridge.
+    _extra_host = os.environ.get("JARVIS_BIND_EXTRA", "").strip()
+    if _extra_host:
+        try:
+            import threading as _threading
+            _extra_server = ThreadingHTTPServer((_extra_host, PORT), ReactHandler)
+            _threading.Thread(target=_extra_server.serve_forever, daemon=True).start()
+            print(f"[REACT] Extra bind for containers: http://{_extra_host}:{PORT}")
+        except Exception as _e:
+            print(f"[REACT] Extra bind on {_extra_host}:{PORT} failed: {_e}")
     print(f"[REACT] Ollama backend: {OLLAMA_HOST}")
     print(f"[REACT] Vault: {VAULT_DIR}")
     print(f"[REACT] Bridge: {BRIDGE_DIR}")

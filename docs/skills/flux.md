@@ -37,7 +37,7 @@ Text-to-image generation using FLUX from Black Forest Labs.
 
 Automatically swaps Ollama models during generation:
 1. qwen3:30b enhances the prompt
-2. Swaps to qwen3:8b (5GB)
+2. Swaps to qwen3:14b (5GB)
 3. FLUX generates (17GB)
 4. Restores qwen3:30b
 

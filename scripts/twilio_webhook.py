@@ -78,7 +78,7 @@ def process_with_jarvis(text: str, context: str = "") -> str:
     try:
         import urllib.request
         payload = json.dumps({
-            "model": "qwen3:30b-a3b",
+            "model": "qwen3.6:27b",
             "messages": [
                 {"role": "system", "content": "You are JARVIS on the phone. Be concise. Max 2 sentences."},
                 {"role": "user", "content": text},

@@ -9,7 +9,7 @@ from typing import Any
 
 
 DEFAULT_VAULT = Path("/mnt/d/Jarvis_vault")
-DEFAULT_MODEL = os.environ.get("JARVIS_CONTEXT_MODEL", "qwen3:8b")
+DEFAULT_MODEL = os.environ.get("JARVIS_CONTEXT_MODEL", "qwen3:14b")
 
 
 def vault_root() -> Path:

@@ -52,9 +52,8 @@ fi
 log "Pulling Ollama models..."
 ollama serve > /dev/null 2>&1 &
 sleep 3
-ollama pull qwen3:8b
-ollama pull qwen3:30b-a3b
-ollama pull qwen3-coder:30b
+ollama pull qwen3:14b
+ollama pull qwen3.6:27b
 
 # ── 6. Node.js app ──────────────────────────────────────────
 log "Installing Next.js HUD..."

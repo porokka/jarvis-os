@@ -1,22 +1,27 @@
 {
-  "tier": "HIGH (24GB)",
-  "total_vram_mb": 24576,
-  "gpu_count": 1,
+  "tier": "HIGH (24GB + 8GB)",
+  "total_vram_mb": 32768,
+  "gpu_count": 2,
+  "gpus": [
+    { "name": "RTX 3090", "vram_mb": 24576, "role": "ollama big models (26b/coder)" },
+    { "name": "RTX 3060 Ti", "vram_mb": 8192, "role": "llama.cpp gemma vision (always-on)" }
+  ],
+  "gpu_assignment": "auto at boot via scripts/gpu_assign.py (best-fit by live VRAM, pinned by UUID)",
   "models": {
     "live": "gemma4:e4b",
     "fast": "gemma4:e4b",
     "tools":"qwen3:14b",
-    "reason": "gemma4:26b",
-    "code": "qwen3-coder:30b",
-    "deep": "gemma4:26b"
+    "reason": "qwen3.6:27b",
+    "code": "qwen3.6:27b",
+    "deep": "qwen3.6:27b"
   },
   "skill_models": {
-    "coding": "qwen3-coder:30b",
+    "coding": "qwen3.6:27b",
     "web": "qwen3:14b",
     "memory": "qwen3:14b",
     "shell": "qwen3:14b"
   },
   "planner_model": "qwen3:14b",
   "tts": "orpheus",
-  "updated": "2026-04-14T00:00:00+03:00"
+  "updated": "2026-08-10T00:00:00+03:00"
 }

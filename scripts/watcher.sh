@@ -1,7 +1,7 @@
 #!/bin/bash
 # ============================================================
 # JARVIS Watcher — The Nervous System
-# 4-way router: mistral-nemo | qwen3-coder | qwen3:30b-a3b | llama3.1:70b | claude
+# 4-way router: mistral-nemo | qwen3-coder | qwen3.6:27b | llama3.1:70b | claude
 # TTS: Orpheus server → PowerShell Windows audio → espeak fallback
 # ============================================================
 
@@ -26,9 +26,9 @@ MPV_EXE="/mnt/c/Program Files/MPV Player/mpv.exe"
 # FFmpeg path — adjust to your Windows install location
 FFMPEG_EXE=$(command -v ffmpeg.exe 2>/dev/null || find /mnt/c/Users/*/AppData/Local/Microsoft/WinGet/Packages/Gyan.FFmpeg*/ffmpeg-*/bin/ffmpeg.exe 2>/dev/null | head -1)
 
-OLLAMA_FAST="qwen3:30b-a3b"
-OLLAMA_CODE="qwen3-coder:30b"
-OLLAMA_REASON="qwen3:30b-a3b"
+OLLAMA_FAST="qwen3.6:27b"
+OLLAMA_CODE="qwen3.6:27b"
+OLLAMA_REASON="qwen3.6:27b"
 OLLAMA_DEEP="llama3.1:70b"
 CLAUDE_CMD="claude --print"
 OLLAMA_HOST="http://localhost:11434"
@@ -469,7 +469,7 @@ while true; do
 
     if [ -z "$RESPONSE" ]; then
       log "WARN: Empty response — reloading model"
-      ollama run qwen3:30b-a3b --keepalive -1 "" > /dev/null 2>&1
+      ollama run qwen3.6:27b --keepalive -1 "" > /dev/null 2>&1
       log "Model reloaded — retrying"
       case "$BRAIN_CHOICE" in
         ollama_fast)   RESPONSE=$(call_ollama "$OLLAMA_FAST"   "$COMMAND") ;;
