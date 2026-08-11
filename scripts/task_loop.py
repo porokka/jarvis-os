@@ -147,31 +147,33 @@ def _send_telegram(chat_id: str, text: str) -> None:
 
 
 def run_flight_monitor(task: dict[str, Any]) -> str:
-    """Check cheapest fare via Amadeus; alert Telegram when under max_price.
+    """Check cheapest fare via Duffel; alert Telegram when under max_price.
 
     Re-alerts only when the price drops below the last notified price, so a
     fare sitting under the threshold doesn't spam every interval.
     """
-    from skills.amadeus_flights import cheapest_offer
+    from skills.duffel_flights import cheapest_offer
 
     args = task.get("args") or {}
     origin = args["origin"]
     destination = args["destination"]
     depart_date = args["depart_date"]
     return_date = args.get("return_date")
-    currency = args.get("currency", "EUR")
     max_price = float(args.get("max_price", 0))
 
-    offer = cheapest_offer(
-        origin, destination, depart_date,
-        return_date=return_date, currency=currency,
-    )
+    offer = cheapest_offer(origin, destination, depart_date, return_date=return_date)
     if offer is None:
         return "no offers found"
 
+    # Duffel returns its own settlement currency per offer — it isn't a
+    # request parameter — so max_price is only meaningful if it was set in
+    # that same currency (monitor_flights records args["currency"] as a
+    # label, not a conversion; mismatches will under/over-trigger).
     price = float(offer["price"])
+    currency = offer.get("currency", args.get("currency", "EUR"))
     state = task.setdefault("state", {})
     state["last_price"] = price
+    state["last_currency"] = currency
     state["last_checked"] = time.strftime("%Y-%m-%d %H:%M:%S")
 
     last_notified = state.get("last_notified_price")
@@ -185,13 +187,13 @@ def run_flight_monitor(task: dict[str, Any]) -> str:
             f"✈️ Fare alert: {trip}",
             (
                 f"Now {price:.0f} {currency} ({offer.get('carrier', '?')}, {stops}) "
-                f"— your target was {max_price:.0f} {currency}."
+                f"— your target was {max_price:.0f} {args.get('currency', currency)}."
             ),
         )
         state["last_notified_price"] = price
         return f"ALERT sent: {price:.0f} {currency}"
 
-    return f"cheapest {price:.0f} {currency} (target {max_price:.0f})"
+    return f"cheapest {price:.0f} {currency} (target {max_price:.0f} {args.get('currency', '')})"
 
 
 def _ollama_json(system: str, prompt: str, model: str = "qwen3:14b") -> dict[str, Any]:

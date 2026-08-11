@@ -1,10 +1,16 @@
 """
-JARVIS Skill — Flight search via the Amadeus Self-Service API.
+JARVIS Skill — Flight search via the Duffel API (api.duffel.com).
+
+Replaces Amadeus Self-Service (decommissioned 2026-07-17). Duffel is
+self-serve, no IATA/ARC accreditation needed. Search is effectively free
+for this use case: charged only past a 1,500-searches-per-confirmed-order
+ratio, and JARVIS never books — so real cost stays a few cents/month at
+most even polling every few hours.
 
 Env (config in .env):
-  AMADEUS_CLIENT_ID      — from developers.amadeus.com
-  AMADEUS_CLIENT_SECRET
-  AMADEUS_ENV            — "test" (default, free tier) or "prod"
+  DUFFEL_ACCESS_TOKEN — from dashboard.duffel.com (duffel_test_... or
+                         duffel_live_... — test tokens return real schedule/
+                         price data from a sandbox airline set, not mock data)
 
 Used two ways:
   - ad-hoc: "search flights Helsinki to Bangkok on 2026-10-05"
@@ -15,14 +21,12 @@ from __future__ import annotations
 
 import json
 import os
-import time
-import urllib.parse
 import urllib.request
 from typing import Any, Dict, List, Optional
 
 SKILL_NAME = "flights"
 SKILL_DESCRIPTION = (
-    "Search real flight prices via the Amadeus API. Use for: 'search flights X to Y', "
+    "Search real flight prices via the Duffel API. Use for: 'search flights X to Y', "
     "'how much is a flight to Z', 'cheapest flight to X in October'."
 )
 
@@ -37,43 +41,53 @@ SKILL_META = {
     "route": "tools",
 }
 
-_TOKEN: Dict[str, Any] = {"value": None, "expires_at": 0.0}
+API_BASE = "https://api.duffel.com"
+API_VERSION = "v2"
 
 
-def _base_url() -> str:
-    env = os.environ.get("AMADEUS_ENV", "test").strip().lower()
-    return "https://api.amadeus.com" if env == "prod" else "https://test.api.amadeus.com"
-
-
-def _get_token() -> str:
-    if _TOKEN["value"] and time.time() < _TOKEN["expires_at"] - 60:
-        return _TOKEN["value"]
-
-    client_id = os.environ.get("AMADEUS_CLIENT_ID", "").strip()
-    client_secret = os.environ.get("AMADEUS_CLIENT_SECRET", "").strip()
-    if not client_id or not client_secret:
+def _token() -> str:
+    token = os.environ.get("DUFFEL_ACCESS_TOKEN", "").strip()
+    if not token:
         raise RuntimeError(
-            "Amadeus API keys missing — set AMADEUS_CLIENT_ID and "
-            "AMADEUS_CLIENT_SECRET in .env (register free at developers.amadeus.com)."
+            "Duffel API key missing — set DUFFEL_ACCESS_TOKEN in .env "
+            "(create one free at dashboard.duffel.com)."
         )
+    return token
 
-    data = urllib.parse.urlencode({
-        "grant_type": "client_credentials",
-        "client_id": client_id,
-        "client_secret": client_secret,
-    }).encode()
+
+def _post(path: str, body: Dict[str, Any], timeout: int = 60) -> Dict[str, Any]:
     req = urllib.request.Request(
-        f"{_base_url()}/v1/security/oauth2/token",
-        data=data,
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        f"{API_BASE}{path}",
+        data=json.dumps({"data": body}).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "Duffel-Version": API_VERSION,
+            "Authorization": f"Bearer {_token()}",
+        },
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        payload = json.loads(resp.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode("utf-8", errors="replace")[:500]
+        raise RuntimeError(f"Duffel API error {e.code}: {detail}") from e
 
-    _TOKEN["value"] = payload["access_token"]
-    _TOKEN["expires_at"] = time.time() + int(payload.get("expires_in", 1799))
-    return _TOKEN["value"]
+
+def _slice_body(origin: str, destination: str, depart_date: str) -> Dict[str, str]:
+    return {
+        "origin": origin.strip().upper(),
+        "destination": destination.strip().upper(),
+        "departure_date": depart_date,
+    }
+
+
+def _parse_iso_duration(duration: str) -> str:
+    """PT9H35M -> '9h35m'."""
+    if not duration:
+        return ""
+    return duration.replace("PT", "").replace("H", "h").replace("M", "m").lower()
 
 
 def search_flights(
@@ -82,46 +96,40 @@ def search_flights(
     depart_date: str,
     return_date: Optional[str] = None,
     adults: int = 1,
-    currency: str = "EUR",
     max_results: int = 5,
 ) -> List[Dict[str, Any]]:
     """Return offers sorted by price: [{price, currency, carrier, stops, duration}]."""
-    params = {
-        "originLocationCode": origin.strip().upper(),
-        "destinationLocationCode": destination.strip().upper(),
-        "departureDate": depart_date,
-        "adults": str(max(1, int(adults))),
-        "currencyCode": currency,
-        "max": str(max(1, min(int(max_results), 20))),
-    }
+    slices = [_slice_body(origin, destination, depart_date)]
     if return_date:
-        params["returnDate"] = return_date
+        slices.append(_slice_body(destination, origin, return_date))
 
-    req = urllib.request.Request(
-        f"{_base_url()}/v2/shopping/flight-offers?" + urllib.parse.urlencode(params),
-        headers={"Authorization": f"Bearer {_get_token()}"},
-    )
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        payload = json.loads(resp.read().decode("utf-8"))
+    body = {
+        "slices": slices,
+        "passengers": [{"type": "adult"} for _ in range(max(1, int(adults)))],
+        "cabin_class": "economy",
+    }
 
-    carriers = (payload.get("dictionaries") or {}).get("carriers", {})
-    offers = []
-    for offer in payload.get("data", []):
-        price = float(offer.get("price", {}).get("grandTotal", 0))
-        itineraries = offer.get("itineraries", [])
-        first = itineraries[0] if itineraries else {}
-        segments = first.get("segments", [])
-        carrier_code = segments[0].get("carrierCode", "") if segments else ""
-        offers.append({
-            "price": price,
-            "currency": currency,
-            "carrier": carriers.get(carrier_code, carrier_code),
+    payload = _post("/air/offer_requests?return_offers=true", body)
+    offers = (payload.get("data") or {}).get("offers", [])
+
+    parsed = []
+    for offer in offers[:max_results]:
+        first_slice = (offer.get("slices") or [{}])[0]
+        segments = first_slice.get("segments", [])
+        carrier = ""
+        if segments:
+            carrier = (segments[0].get("operating_carrier") or {}).get("name", "")
+
+        parsed.append({
+            "price": float(offer.get("total_amount", 0) or 0),
+            "currency": offer.get("total_currency", "EUR"),
+            "carrier": carrier or "Unknown",
             "stops": max(0, len(segments) - 1),
-            "duration": first.get("duration", "").replace("PT", "").lower(),
+            "duration": _parse_iso_duration(first_slice.get("duration", "")),
         })
 
-    offers.sort(key=lambda o: o["price"])
-    return offers
+    parsed.sort(key=lambda o: o["price"])
+    return parsed
 
 
 def cheapest_offer(
@@ -129,12 +137,8 @@ def cheapest_offer(
     destination: str,
     depart_date: str,
     return_date: Optional[str] = None,
-    currency: str = "EUR",
 ) -> Optional[Dict[str, Any]]:
-    offers = search_flights(
-        origin, destination, depart_date,
-        return_date=return_date, currency=currency, max_results=5,
-    )
+    offers = search_flights(origin, destination, depart_date, return_date=return_date, max_results=5)
     return offers[0] if offers else None
 
 

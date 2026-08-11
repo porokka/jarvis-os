@@ -5,7 +5,7 @@ Background monitors — recurring watches executed by `scripts/task_loop.py`
 condition is met.
 
 **Files:** `skills/monitor_skill.py` (create/list/remove),
-`scripts/task_loop.py` (execution), `skills/amadeus_flights.py` (flight data)
+`scripts/task_loop.py` (execution), `skills/duffel_flights.py` (flight data)
 
 ---
 
@@ -16,7 +16,7 @@ condition is met.
     → monitor_condition / monitor_flights tool
     → writes task to Jarvis_vault/.jarvis/tasks/tasks.json
     → task_loop picks it up on its interval
-        ├── flight_monitor    → Amadeus cheapest fare vs max_price
+        ├── flight_monitor    → Duffel cheapest fare vs max_price
         └── condition_monitor → web search → LLM judges condition (JSON verdict)
     → condition met → Telegram message or email
 ```
@@ -45,17 +45,24 @@ condition is met.
 - Telegram (default): `notify_chat_id`, defaults to owner chat (`JARVIS_TELEGRAM_CHAT_ID`)
 - Email: `notify: "email"` + `email_to` — uses the email skill's SMTP config
 
-## Amadeus setup (flight monitors + `flight_search`)
+## Duffel setup (flight monitors + `flight_search`)
 
-Register free at developers.amadeus.com, then in `.env`:
+Amadeus Self-Service was decommissioned 2026-07-17 (enterprise/IATA-accredited
+only now). Duffel replaced it — self-serve signup at dashboard.duffel.com, no
+accreditation needed. In `.env`:
 
 ```
-AMADEUS_CLIENT_ID=...
-AMADEUS_CLIENT_SECRET=...
-AMADEUS_ENV=test        # test = free tier; prod for live data
+DUFFEL_ACCESS_TOKEN=duffel_test_...     # switch to duffel_live_... when ready
 ```
+
+Search cost: free up to a 1,500-searches-per-confirmed-order ratio; since
+JARVIS never books, real cost is ~$0.005/search — a route checked every 6h
+runs under $1/month.
 
 IATA codes and YYYY-MM-DD dates (Helsinki=HEL, Bangkok=BKK, Tallinn=TLL).
+Note: Duffel returns price in its own settlement currency per offer (not a
+request parameter) — `max_price`/`currency` on a monitor are only accurate
+if they match that currency; mismatches will under/over-trigger alerts.
 
 ## Task format (tasks.json)
 
